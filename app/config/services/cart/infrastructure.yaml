@@ -37,3 +37,5 @@ services:
         tags: [ 'controller.service_arguments' ]
 
     Siroko\Cart\Domain\Repository\ProductRepository: '@Siroko\Cart\Infrastructure\Persistence\Doctrine\Repository\DoctrineProductRepository'
+    Siroko\Cart\Domain\Repository\CartRepository: '@Siroko\Cart\Infrastructure\Persistence\Doctrine\Repository\DoctrineCartRepository'
+    Siroko\Cart\Domain\Repository\CartItemRepository: '@Siroko\Cart\Infrastructure\Persistence\Doctrine\Repository\DoctrineCartItemRepository'
