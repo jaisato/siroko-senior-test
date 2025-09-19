@@ -1,0 +1,17 @@
+services:
+    _defaults:
+        autowire: true
+        autoconfigure: true
+        public: public
+
+    Siroko\Cart\Application\Command\:
+        resource: '../../../src/Cart/Application/Command/**'
+        exclude: '../../../src/Cart/Application/Command/**/*Command.php'
+        tags:
+            - { name: tactician.handler, typehints: true }
+
+    Siroko\Cart\Application\Query\:
+        resource: '../../../src/Cart/Application/Query/**'
+        exclude: '../../../src/Cart/Application/Query/**/*Query.php'
+        tags:
+            - { name: tactician.handler, typehints: true }
