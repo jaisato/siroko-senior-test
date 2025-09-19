@@ -1,0 +1,22 @@
+services:
+    _defaults:
+        autowire: true
+        autoconfigure: true
+        public: public
+
+    Siroko\Cart\Infrastructure\CommandBus\CommandBusRead:
+        arguments:
+            - '@tactician.commandbus.read'
+
+    Siroko\Cart\Infrastructure\CommandBus\CommandBusWrite:
+        arguments:
+            - '@tactician.commandbus.write'
+
+    Siroko\Cart\Infrastructure\CommandBus\CommandBusCli:
+        arguments:
+            - '@tactician.commandbus.cli'
+
+    ## Aliases
+    Siroko\Cart\Domain\CommandBus\CommandBusRead: '@Siroko\Cart\Infrastructure\CommandBus\CommandBusRead'
+    Siroko\Cart\Domain\CommandBus\CommandBusWrite: '@Siroko\Cart\Infrastructure\CommandBus\CommandBusWrite'
+    Siroko\Cart\Domain\CommandBus\CommandBusCli: '@Siroko\Cart\Infrastructure\CommandBus\CommandBusCli'

@@ -1,0 +1,5 @@
+api:
+    resource: './routes/api/'
+    type: directory
+    host: '%api_domain%'
+    prefix: '%api_route_prefix%'

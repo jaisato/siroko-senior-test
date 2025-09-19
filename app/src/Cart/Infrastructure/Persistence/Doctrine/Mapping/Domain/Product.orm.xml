@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<doctrine-mapping xmlns="http://doctrine-project.org/schemas/orm/doctrine-mapping"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                  xsi:schemaLocation="http://doctrine-project.org/schemas/orm/doctrine-mapping
+                                      http://doctrine-project.org/schemas/orm/doctrine-mapping.xsd">
+
+    <entity name="Siroko\Cart\Domain\Entity\Product"
+            table="product"
+            repository-class="Siroko\Cart\Infrastructure\Persistence\Doctrine\Repository\DoctrineProductRepository">
+
+        <id name="id" type="product_id" column="id">
+            <generator strategy="NONE"/>
+        </id>
+
+        <!-- Fields -->
+        <field name="name"
+               column="name"
+               type="product_name"
+               length="200"
+               nullable="false"
+        />
+
+        <field name="code"
+               column="code"
+               type="product_code"
+               length="50"
+               nullable="false"
+        />
+
+        <field name="quantity"
+               column="quantity"
+               type="quantity"
+               nullable="false"
+        />
+
+        <!-- Embeddable -->
+        <embedded name="price" class="Siroko\Cart\Infrastructure\Persistence\Doctrine\Embeddable\PriceEmbeddable" />
+    </entity>
+</doctrine-mapping>

@@ -1,0 +1,14 @@
+services:
+    _defaults:
+        autowire: true
+        autoconfigure: true
+        public: public
+
+    Siroko\Cart\Domain\CommandBus\:
+        resource: '../../../src/Cart/Domain/CommandBus'
+
+    Siroko\Cart\Domain\Queue\:
+        resource: '../../../src/Cart/Domain/Queue'
+
+    Siroko\Cart\Domain\Repository\:
+        resource: '../../../src/Cart/Domain/Repository'
