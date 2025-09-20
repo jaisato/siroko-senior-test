@@ -4,12 +4,12 @@ namespace Siroko\Cart\Infrastructure\Api\Controller\Product;
 
 use Siroko\Cart\Application\Query\Product\GetProductListQuery;
 use Siroko\Cart\Domain\CommandBus\CommandBusRead;
-use Siroko\Cart\Infrastructure\Api\Dto\Product\ProductReadCollection;
+use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\Routing\Annotation\Route;
 
-class GetProductListController
+class GetProductListController extends AbstractController
 {
     /**
      * @param CommandBusRead $commandBusRead

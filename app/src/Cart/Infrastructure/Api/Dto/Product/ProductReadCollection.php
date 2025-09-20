@@ -26,7 +26,7 @@ use Siroko\Cart\Infrastructure\Api\Controller\Product\GetProductListController;
         ),
     ],
 )]
-class ProductReadCollection
+final class ProductReadCollection
 {
     /**
      * @var array|ProductRead[]

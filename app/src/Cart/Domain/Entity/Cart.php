@@ -12,9 +12,9 @@ class Cart
     private CartId $id;
 
     /**
-     * @var ArrayCollection<string, CartItem> items in the cart
+     * @var Collection<int, CartItem> items in the cart
      */
-    private ArrayCollection $items;
+    private Collection $items;
 
     private CartStatus $status;
 
@@ -36,9 +36,9 @@ class Cart
     }
 
     /**
-     * @return ArrayCollection|CartItem[]
+     * @return Collection<int, CartItem>|CartItem[]
      */
-    public function getItems(): ArrayCollection
+    public function getItems(): Collection
     {
         return $this->items;
     }

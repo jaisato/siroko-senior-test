@@ -55,7 +55,7 @@ use Siroko\Cart\Infrastructure\Api\Controller\Product\PostProductController;
         ),
     ],
 )]
-class ProductRead
+final class ProductRead
 {
     /**
      * @param string $id
