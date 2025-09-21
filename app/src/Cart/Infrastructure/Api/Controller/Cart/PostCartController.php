@@ -4,6 +4,7 @@ namespace Siroko\Cart\Infrastructure\Api\Controller\Cart;
 
 use Siroko\Cart\Application\Command\Cart\CreateCartCommand;
 use Siroko\Cart\Domain\CommandBus\CommandBusWrite;
+use Siroko\Cart\Domain\Exception\InvalidQuantityException;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
@@ -22,6 +23,7 @@ class PostCartController extends AbstractController
     /**
      * @param Request $request
      * @return JsonResponse
+     * @throws InvalidQuantityException
      */
     #[Route('/v1/carts', methods: ['POST'])]
     public function __invoke(Request $request): JsonResponse

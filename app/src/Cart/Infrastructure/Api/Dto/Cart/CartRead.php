@@ -5,8 +5,10 @@ namespace Siroko\Cart\Infrastructure\Api\Dto\Cart;
 use ApiPlatform\Metadata as API;
 use ApiPlatform\OpenApi\Model;
 use Brick\Money\Exception\UnknownCurrencyException;
+use Siroko\Cart\Application\Command\Cart\CheckoutCartCommand;
 use Siroko\Cart\Domain\Entity\Cart;
 use Siroko\Cart\Domain\Entity\CartItem;
+use Siroko\Cart\Infrastructure\Api\Controller\Cart\CheckoutCartController;
 use Siroko\Cart\Infrastructure\Api\Controller\Cart\DeleteCartItemController;
 use Siroko\Cart\Infrastructure\Api\Controller\Cart\GetCartController;
 use Siroko\Cart\Infrastructure\Api\Controller\Cart\PostCartController;
@@ -94,6 +96,23 @@ use Siroko\Cart\Infrastructure\Api\Controller\Cart\PostCartController;
                     new Model\Parameter(
                         name: 'itemId', in: 'path', required: true,
                         description: 'Item UUID', schema: ['type' => 'string', 'format' => 'uuid']
+                    ),
+                ]
+            ),
+        ),
+        new API\Put(
+            uriTemplate: '/v1/carts/{id}/checkout',
+            controller: CheckoutCartController::class,
+            read: false,
+            write: false,
+            input: false,
+            output: CartRead::class,
+            openapi: new Model\Operation(
+                summary: 'Checkout cart by id',
+                parameters: [
+                    new Model\Parameter(
+                        name: 'id', in: 'path', required: true,
+                        description: 'Cart UUID', schema: ['type' => 'string', 'format' => 'uuid']
                     ),
                 ]
             ),

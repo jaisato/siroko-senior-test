@@ -65,4 +65,13 @@ class Cart
     {
         return $this->items;
     }
+
+    /**
+     * @param CartStatus $status
+     * @return void
+     */
+    public function setStatus(CartStatus $status): void
+    {
+        $this->status = $status;
+    }
 }
