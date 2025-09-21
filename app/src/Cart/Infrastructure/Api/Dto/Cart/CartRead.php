@@ -8,6 +8,7 @@ use Brick\Money\Exception\UnknownCurrencyException;
 use Siroko\Cart\Application\Command\Cart\CheckoutCartCommand;
 use Siroko\Cart\Domain\Entity\Cart;
 use Siroko\Cart\Domain\Entity\CartItem;
+use Siroko\Cart\Infrastructure\Api\Controller\Cart\AddCartProductController;
 use Siroko\Cart\Infrastructure\Api\Controller\Cart\CheckoutCartController;
 use Siroko\Cart\Infrastructure\Api\Controller\Cart\DeleteCartItemController;
 use Siroko\Cart\Infrastructure\Api\Controller\Cart\GetCartController;
@@ -113,6 +114,27 @@ use Siroko\Cart\Infrastructure\Api\Controller\Cart\PostCartController;
                     new Model\Parameter(
                         name: 'id', in: 'path', required: true,
                         description: 'Cart UUID', schema: ['type' => 'string', 'format' => 'uuid']
+                    ),
+                ]
+            ),
+        ),
+        new API\Put(
+            uriTemplate: '/v1/carts/{cartId}/products/{productId}/add',
+            controller: AddCartProductController::class,
+            read: false,
+            write: false,
+            input: false,
+            output: CartRead::class,
+            openapi: new Model\Operation(
+                summary: 'Add product to cart by id',
+                parameters: [
+                    new Model\Parameter(
+                        name: 'cartId', in: 'path', required: true,
+                        description: 'Cart UUID', schema: ['type' => 'string', 'format' => 'uuid']
+                    ),
+                    new Model\Parameter(
+                        name: 'productId', in: 'path', required: true,
+                        description: 'Product UUID', schema: ['type' => 'string', 'format' => 'uuid']
                     ),
                 ]
             ),
