@@ -4,6 +4,7 @@ namespace Siroko\Cart\Domain\Repository;
 
 use Siroko\Cart\Domain\Entity\Cart;
 use Siroko\Cart\Domain\ValueObject\CartId;
+use Siroko\Cart\Domain\ValueObject\ItemId;
 
 interface CartRepository
 {
@@ -23,4 +24,13 @@ interface CartRepository
      * @return Cart|null
      */
     public function ofId(CartId $id): ?Cart;
+
+    /**
+     * Elimina un item del cart dado su itemId
+     *
+     * @param CartId $cartId
+     * @param ItemId $itemId
+     * @return void
+     */
+    public function removeItem(CartId $cartId, ItemId $itemId): void;
 }

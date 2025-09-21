@@ -11,6 +11,8 @@ api_platform:
     formats:
         json: [ 'application/json' ]
         html: [ 'text/html' ]
+    error_formats:
+        json: [ 'application/json' ]
     defaults:
         stateless: true
         cache_headers:

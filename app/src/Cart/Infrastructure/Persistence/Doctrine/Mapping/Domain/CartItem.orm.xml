@@ -6,7 +6,7 @@
 
     <entity name="Siroko\Cart\Domain\Entity\CartItem"
             table="cart_item"
-            repository-class="Siroko\Cart\Infrastructure\Persistence\Doctrine\Repository\DoctrineCartItemRepository">
+    >
 
         <id name="id" type="item_id" column="id">
             <generator strategy="NONE"/>

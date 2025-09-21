@@ -5,8 +5,10 @@ namespace Siroko\Cart\Infrastructure\Persistence\Doctrine\Repository;
 use Doctrine\ORM\EntityManagerInterface;
 use Ramsey\Uuid\Uuid;
 use Siroko\Cart\Domain\Entity\Cart;
+use Siroko\Cart\Domain\Entity\CartItem;
 use Siroko\Cart\Domain\Repository\CartRepository;
 use Siroko\Cart\Domain\ValueObject\CartId;
+use Siroko\Cart\Domain\ValueObject\ItemId;
 use Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\CartIdType;
 
 class DoctrineCartRepository implements CartRepository
@@ -53,5 +55,32 @@ class DoctrineCartRepository implements CartRepository
             ->setParameter('id', $id, CartIdType::NAME);
 
         return $qb->getQuery()->getOneOrNullResult();
+    }
+
+    /**
+     * @param CartId $cartId
+     * @param ItemId $itemId
+     * @return void
+     * @throws \Doctrine\ORM\Exception\ORMException
+     */
+    public function removeItem(CartId $cartId, ItemId $itemId): void
+    {
+        $cartRef = $this->em->getReference(Cart::class, $cartId);
+
+        $item = $this->em->getRepository(CartItem::class)->findOneBy([
+            'id'   => $itemId,
+            'cart' => $cartRef,
+        ]);
+
+        if (!$item) {
+            return;
+        }
+
+        if (method_exists($cartRef, 'removeItem')) {
+            $cartRef->removeItem($item);
+        }
+
+        $this->em->remove($item);
+        $this->em->flush();
     }
 }
