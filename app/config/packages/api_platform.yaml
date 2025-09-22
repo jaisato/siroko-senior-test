@@ -1,0 +1,19 @@
+api_platform:
+    title: API Siroko
+    version: 1.0.0
+    description: 'API de creación y listado de productos y carrito online'
+    enable_docs: true
+    mapping:
+        paths:
+            - '%kernel.project_dir%/src/Cart/Infrastructure/Api/Dto'
+    patch_formats:
+        json: [ 'application/merge-patch+json' ]
+    formats:
+        json: [ 'application/json' ]
+        html: [ 'text/html' ]
+    error_formats:
+        json: [ 'application/json' ]
+    defaults:
+        stateless: true
+        cache_headers:
+            vary: ['Content-Type', 'Authorization', 'Origin']

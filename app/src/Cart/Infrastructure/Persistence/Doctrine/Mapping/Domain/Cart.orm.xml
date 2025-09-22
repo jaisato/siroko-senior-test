@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<doctrine-mapping xmlns="http://doctrine-project.org/schemas/orm/doctrine-mapping"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                  xsi:schemaLocation="http://doctrine-project.org/schemas/orm/doctrine-mapping
+                                      http://doctrine-project.org/schemas/orm/doctrine-mapping.xsd">
+
+    <entity name="Siroko\Cart\Domain\Entity\Cart"
+            table="cart"
+            repository-class="Siroko\Cart\Infrastructure\Persistence\Doctrine\Repository\DoctrineCartRepository">
+
+        <id name="id" type="cart_id" column="id">
+            <generator strategy="NONE"/>
+        </id>
+
+        <!-- Fields -->
+        <field name="status"
+               column="status"
+               type="cart_status"
+               nullable="false"
+        />
+
+        <one-to-many field="items"
+                     target-entity="Siroko\Cart\Domain\Entity\CartItem"
+                     mapped-by="cart"
+                     orphan-removal="true"
+                     fetch="EXTRA_LAZY">
+            <cascade>
+                <cascade-persist/>
+                <cascade-remove/>
+            </cascade>
+            <!-- opcional -->
+            <order-by>
+                <order-by-field name="id" direction="ASC"/>
+            </order-by>
+        </one-to-many>
+    </entity>
+</doctrine-mapping>

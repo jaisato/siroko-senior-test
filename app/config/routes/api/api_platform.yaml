@@ -1,0 +1,11 @@
+api_platform:
+    resource: .
+    type: api_platform
+    prefix: /
+
+api_routes:
+    resource:
+        path: '../../../src/Cart/Infrastructure/Api/Controller/'
+        namespace: 'Siroko\Cart\Infrastructure\Api\Controller'
+    type: attribute
+    prefix: /
