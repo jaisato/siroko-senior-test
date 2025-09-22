@@ -5,7 +5,6 @@ namespace Siroko\Cart\Infrastructure\Api\Dto\Cart;
 use ApiPlatform\Metadata as API;
 use ApiPlatform\OpenApi\Model;
 use Brick\Money\Exception\UnknownCurrencyException;
-use Siroko\Cart\Application\Command\Cart\CheckoutCartCommand;
 use Siroko\Cart\Domain\Entity\Cart;
 use Siroko\Cart\Domain\Entity\CartItem;
 use Siroko\Cart\Infrastructure\Api\Controller\Cart\AddCartProductController;
@@ -17,6 +16,7 @@ use Siroko\Cart\Infrastructure\Api\Controller\Cart\PostCartController;
 #[API\ApiResource(
     operations: [
         new API\Get(
+            name: 'api_get_cart_by_id',
             uriTemplate: '/v1/carts/{id}',
             controller: GetCartController::class,
             read: false,
@@ -32,6 +32,7 @@ use Siroko\Cart\Infrastructure\Api\Controller\Cart\PostCartController;
             ),
         ),
         new API\Post(
+            name: 'api_create_cart',
             uriTemplate: '/v1/carts',
             controller: PostCartController::class,
             read: false,
@@ -80,6 +81,7 @@ use Siroko\Cart\Infrastructure\Api\Controller\Cart\PostCartController;
             ),
         ),
         new API\Delete(
+            name: 'api_delete_cart_item_by_id',
             uriTemplate: '/v1/carts/{cartId}/{itemId}',
             controller: DeleteCartItemController::class,
             read: false,
@@ -102,6 +104,7 @@ use Siroko\Cart\Infrastructure\Api\Controller\Cart\PostCartController;
             ),
         ),
         new API\Put(
+            name: 'api_cart_checkout_by_id',
             uriTemplate: '/v1/carts/{id}/checkout',
             controller: CheckoutCartController::class,
             read: false,
@@ -119,6 +122,7 @@ use Siroko\Cart\Infrastructure\Api\Controller\Cart\PostCartController;
             ),
         ),
         new API\Put(
+            name: 'api_add_cart_product_by_id',
             uriTemplate: '/v1/carts/{cartId}/products/{productId}/add',
             controller: AddCartProductController::class,
             read: false,

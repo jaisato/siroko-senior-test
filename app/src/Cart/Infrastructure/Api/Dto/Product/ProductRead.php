@@ -11,6 +11,7 @@ use Siroko\Cart\Infrastructure\Api\Controller\Product\PostProductController;
 #[API\ApiResource(
     operations: [
         new API\Get(
+            name: 'api_get_product_by_id',
             uriTemplate: '/v1/products/{id}',
             controller: GetProductByIdController::class,
             read: false,
@@ -26,6 +27,7 @@ use Siroko\Cart\Infrastructure\Api\Controller\Product\PostProductController;
             ),
         ),
         new API\Post(
+            name: 'api_create_product',
             uriTemplate: '/v1/products',
             controller: PostProductController::class,
             read: false,

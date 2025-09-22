@@ -1,0 +1,41 @@
+doctrine:
+    dbal:
+        url: '%env(resolve:DATABASE_URL)%'
+        server_version: '8.0.43'
+        dbname_suffix: '_test%env(default::TEST_TOKEN)%'
+
+        profiling_collect_backtrace: '%kernel.debug%'
+        use_savepoints: true
+        types:
+            uuid: 'Ramsey\Uuid\Doctrine\UuidType'
+            uuid_binary: 'Ramsey\Uuid\Doctrine\UuidBinaryType'
+            uuid_binary_ordered_time: 'Ramsey\Uuid\Doctrine\UuidBinaryOrderedTimeType'
+            product_id: Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\ProductIdType
+            product_name: Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\ProductNameType
+            product_code: Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\ProductCodeType
+            quantity: Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\QuantityType
+            cart_id: Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\CartIdType
+            item_id: Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\ItemIdType
+            cart_status: Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\CartStatusType
+    orm:
+        auto_generate_proxy_classes: true
+        enable_lazy_ghost_objects: true
+        report_fields_where_declared: true
+        validate_xml_mapping: true
+        naming_strategy: doctrine.orm.naming_strategy.underscore_number_aware
+        #auto_mapping: true
+        mappings:
+            CartDomain:
+                type: xml
+                is_bundle: false
+                dir: '%kernel.project_dir%/src/Cart/Infrastructure/Persistence/Doctrine/Mapping/Domain'
+                prefix: 'Siroko\Cart\Domain\Entity'
+                alias: CartDomain
+            CartInfrastructure:
+                type: xml
+                is_bundle: false
+                dir: '%kernel.project_dir%/src/Cart/Infrastructure/Persistence/Doctrine/Mapping/Embeddable'
+                prefix: 'Siroko\Cart\Infrastructure\Persistence\Doctrine\Embeddable'
+                alias: CartInfrastructure
+        controller_resolver:
+            auto_mapping: false

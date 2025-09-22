@@ -14,12 +14,16 @@ use Siroko\Cart\Domain\ValueObject\Quantity;
 
 final class ProductFixtures extends Fixture
 {
+    public const REF_PREFIX = 'product:';
+
+    public const COUNT      = 20;
+
     public function load(ObjectManager $manager): void
     {
         $faker = Faker::create('es_ES');
 
-        for ($i = 0; $i < 20; $i++) {
-            $id   = ProductId::fromString($faker->uuid);
+        for ($i = 0; $i < self::COUNT; $i++) {
+            $id   = ProductId::fromString($faker->uuid());
             $name = new Name($faker->unique()->words(3, true));
             $code = new ProductCode(strtoupper($faker->unique()->bothify('SKU-####-??')));
             $price = Price::of((string)$faker->randomFloat(2, 5, 200), 'EUR');
@@ -27,6 +31,8 @@ final class ProductFixtures extends Fixture
             $product = new Product($id, $code, $name, $price, $quantity);
 
             $manager->persist($product);
+
+            $this->addReference(self::REF_PREFIX . $i, $product);
         }
 
         $manager->flush();

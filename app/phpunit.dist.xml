@@ -1,20 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<!-- https://phpunit.readthedocs.io/en/latest/configuration.html -->
-<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
-         colors="true"
-         failOnDeprecation="true"
-         failOnNotice="true"
-         failOnWarning="true"
-         bootstrap="tests/bootstrap.php"
-         cacheDirectory=".phpunit.cache"
->
+<phpunit bootstrap="tests/bootstrap.php" colors="true">
     <php>
-        <ini name="display_errors" value="1" />
-        <ini name="error_reporting" value="-1" />
-        <server name="APP_ENV" value="test" force="true" />
-        <server name="SHELL_VERBOSITY" value="-1" />
+        <server name="APP_ENV" value="test"/>
+        <server name="APP_DEBUG" value="0"/>
+        <server name="KERNEL_CLASS" value="Siroko\Kernel"/>
+        <env name="DATABASE_URL" value="mysql://root:sVlPsF32847@db:3306/siroko_cart?serverVersion=8.0.43"/>
+        <env name="SYMFONY_DEPRECATIONS_HELPER" value="verbose"/>
     </php>
 
     <testsuites>
@@ -40,5 +32,6 @@
     </source>
 
     <extensions>
+        <bootstrap class="DAMA\DoctrineTestBundle\PHPUnit\PHPUnitExtension" />
     </extensions>
 </phpunit>

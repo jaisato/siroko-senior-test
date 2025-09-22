@@ -11,6 +11,7 @@ use Siroko\Cart\Infrastructure\Api\Controller\Product\GetProductListController;
 #[API\ApiResource(
     operations: [
         new API\GetCollection(
+            name: 'api_get_products',
             uriTemplate: '/v1/products',
             controller: GetProductListController::class,
             read: false,
