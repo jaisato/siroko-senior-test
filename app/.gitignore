@@ -13,3 +13,8 @@
 /phpunit.xml
 /.phpunit.cache/
 ###< phpunit/phpunit ###
+
+###> environment files ###
+.env.dev
+.env.test
+###< environment files ###
