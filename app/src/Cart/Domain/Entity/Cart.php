@@ -55,7 +55,7 @@ class Cart
     {
         if ($this->items->removeElement($item)) {
             if ($item->getCart() === $this) {
-                $item->setCart($this);
+                $item->setCart(null);
             }
         }
     }
