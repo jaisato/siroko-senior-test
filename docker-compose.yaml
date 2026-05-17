@@ -33,10 +33,10 @@ services:
     image: mysql:8.0
     command: ["mysqld", "--default-authentication-plugin=mysql_native_password"]
     environment:
-      MYSQL_ROOT_PASSWORD: sVlPsF32847
-      MYSQL_DATABASE: siroko_cart
-      MYSQL_USER: siroko_user
-      MYSQL_PASSWORD: sVlPsF3284
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-change_me_root}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-siroko_cart}
+      MYSQL_USER: ${MYSQL_USER:-siroko_user}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-change_me}
     ports:
       - "3306:3306"
     volumes:

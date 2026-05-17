@@ -31,7 +31,7 @@ class DeleteCartItemController extends AbstractController
                 new DeleteCartItemCommand($cartId, $itemId)
             );
         } catch (\Exception $ex) {
-            return new JsonResponse(['exception' => $ex->getMessage()], JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
+            return new JsonResponse(['error' => 'An unexpected error occurred'], JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
         }
 
         return new JsonResponse([], JsonResponse::HTTP_NO_CONTENT);

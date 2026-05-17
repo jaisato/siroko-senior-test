@@ -25,6 +25,21 @@ class PostProductController extends AbstractController
     {
         $requestContent = $request->getContent();
         $jsonContent = json_decode($requestContent, true);
+
+        if (!is_array($jsonContent)) {
+            return new JsonResponse(['error' => 'Invalid JSON body'], Response::HTTP_BAD_REQUEST);
+        }
+
+        $requiredFields = ['code', 'name', 'priceAmount', 'priceCurrency', 'quantity'];
+        foreach ($requiredFields as $field) {
+            if (!isset($jsonContent[$field])) {
+                return new JsonResponse(
+                    ['error' => sprintf('Missing required field: %s', $field)],
+                    Response::HTTP_BAD_REQUEST
+                );
+            }
+        }
+
         $product = $this->commandBus->handle(
             new CreateProductCommand(
                 $jsonContent['code'],
