@@ -33,7 +33,7 @@ class AddCartProductController extends AbstractController
 
             return new JsonResponse($cart);
         } catch (\Throwable $e) {
-            return new JsonResponse(['Exception' => $e->getMessage()], JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
+            return new JsonResponse(['error' => 'An internal error occurred'], JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 }

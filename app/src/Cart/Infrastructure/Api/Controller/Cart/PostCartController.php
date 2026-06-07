@@ -31,6 +31,10 @@ class PostCartController extends AbstractController
         $content = $request->getContent();
         $jsonData = json_decode($content, true);
 
+        if (!is_array($jsonData) || !isset($jsonData['products'])) {
+            return new JsonResponse(['error' => 'Invalid request: missing products field'], JsonResponse::HTTP_BAD_REQUEST);
+        }
+
         $cart = $this->commandBus->handle(
             new CreateCartCommand($jsonData['products'])
         );
