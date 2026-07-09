@@ -44,3 +44,7 @@ Con el entorno levantado de desarrollo, entrar en el contenedo PHP: docker compo
 - Crear BD para tests: php bin/console doctrine:database:create --env=test --if-not-exists
 - Ejecutar migraciones: php bin/console doctrine:migrations:migrate -n --env=test
 - Ejecutar PHPUnit: php bin/phpunit
+
+## Nota de seguridad
+
+Las antiguas contraseñas de la base de datos y el APP_SECRET que estaban en el repositorio siguen presentes en el historial de git: hay que rotarlas en cualquier otro sitio donde se hayan reutilizado. Los secretos de desarrollo ahora se parametrizan mediante variables de entorno (`MYSQL_ROOT_PASSWORD`, `MYSQL_PASSWORD`) y `APP_SECRET` debe definirse en `app/.env.local`.
