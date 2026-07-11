@@ -6,6 +6,7 @@ use Siroko\Cart\Application\Command\Cart\AddCartProductCommand;
 use Siroko\Cart\Domain\CommandBus\CommandBusWrite;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\JsonResponse;
+use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 use Symfony\Component\Routing\Annotation\Route;
 
 class AddCartProductController extends AbstractController
@@ -32,8 +33,11 @@ class AddCartProductController extends AbstractController
             );
 
             return new JsonResponse($cart);
+        } catch (HttpExceptionInterface $e) {
+            // Preserve intended HTTP status codes (e.g. 404 for a missing cart/product).
+            throw $e;
         } catch (\Throwable $e) {
-            return new JsonResponse(['Exception' => $e->getMessage()], JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
+            return new JsonResponse(['error' => 'Internal server error'], JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 }

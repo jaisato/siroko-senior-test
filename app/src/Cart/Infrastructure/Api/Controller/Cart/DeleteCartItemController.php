@@ -6,6 +6,7 @@ use Siroko\Cart\Application\Command\Cart\DeleteCartItemCommand;
 use Siroko\Cart\Domain\CommandBus\CommandBusWrite;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\JsonResponse;
+use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 use Symfony\Component\Routing\Annotation\Route;
 
 class DeleteCartItemController extends AbstractController
@@ -30,8 +31,11 @@ class DeleteCartItemController extends AbstractController
             $this->commandBus->handle(
                 new DeleteCartItemCommand($cartId, $itemId)
             );
-        } catch (\Exception $ex) {
-            return new JsonResponse(['exception' => $ex->getMessage()], JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
+        } catch (HttpExceptionInterface $ex) {
+            // Preserve intended HTTP status codes (e.g. 404 for a missing item).
+            throw $ex;
+        } catch (\Throwable $ex) {
+            return new JsonResponse(['error' => 'Internal server error'], JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
         }
 
         return new JsonResponse([], JsonResponse::HTTP_NO_CONTENT);
