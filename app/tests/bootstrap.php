@@ -14,7 +14,7 @@ $dotenv = new Dotenv();
 $dotenv->usePutenv(true)->bootEnv(dirname(__DIR__).'/.env');
 
 if (!getenv('DATABASE_URL')) {
-    $dsn = 'mysql://root:sVlPsF32847@db:3306/siroko_cart?serverVersion=8.0.43&charset=utf8mb4';
+    $dsn = 'mysql://root:change_me_root_password@db:3306/siroko_cart?serverVersion=8.0.43&charset=utf8mb4';
     putenv('DATABASE_URL='.$dsn);
     $_ENV['DATABASE_URL'] = $_SERVER['DATABASE_URL'] = $dsn;
 }

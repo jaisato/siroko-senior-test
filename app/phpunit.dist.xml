@@ -5,7 +5,7 @@
         <server name="APP_ENV" value="test"/>
         <server name="APP_DEBUG" value="0"/>
         <server name="KERNEL_CLASS" value="Siroko\Kernel"/>
-        <env name="DATABASE_URL" value="mysql://root:sVlPsF32847@db:3306/siroko_cart?serverVersion=8.0.43"/>
+        <env name="DATABASE_URL" value="mysql://root:change_me_root_password@db:3306/siroko_cart?serverVersion=8.0.43"/>
         <env name="SYMFONY_DEPRECATIONS_HELPER" value="verbose"/>
     </php>
 
