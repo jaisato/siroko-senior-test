@@ -7,6 +7,7 @@ use Siroko\Cart\Domain\CommandBus\CommandBusWrite;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\HttpKernel\Exception\BadRequestHttpException;
 use Symfony\Component\Routing\Annotation\Route;
 use Symfony\Component\HttpFoundation\JsonResponse;
 
@@ -25,6 +26,18 @@ class PostProductController extends AbstractController
     {
         $requestContent = $request->getContent();
         $jsonContent = json_decode($requestContent, true);
+
+        if (!is_array($jsonContent)) {
+            throw new BadRequestHttpException('Invalid JSON body');
+        }
+
+        $requiredFields = ['code', 'name', 'priceAmount', 'priceCurrency', 'quantity'];
+        foreach ($requiredFields as $field) {
+            if (!isset($jsonContent[$field])) {
+                throw new BadRequestHttpException(sprintf('Missing required field "%s"', $field));
+            }
+        }
+
         $product = $this->commandBus->handle(
             new CreateProductCommand(
                 $jsonContent['code'],
