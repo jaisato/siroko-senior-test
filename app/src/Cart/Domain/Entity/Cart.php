@@ -53,11 +53,12 @@ class Cart
 
     public function removeItem(CartItem $item): void
     {
-        if ($this->items->removeElement($item)) {
-            if ($item->getCart() === $this) {
-                $item->setCart($this);
-            }
-        }
+        // The inverse side is enough: the association is mapped with
+        // orphan-removal, so dropping the item from this collection is what
+        // deletes it. Re-assigning the owning side here (the previous
+        // `$item->setCart($this)`) was a no-op that only made it look like the
+        // detach was handled.
+        $this->items->removeElement($item);
     }
 
     /** @return Collection<int, CartItem> */

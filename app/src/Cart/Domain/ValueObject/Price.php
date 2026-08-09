@@ -21,7 +21,7 @@ final class Price implements Stringable, JsonSerializable
     public static function of(
         string|int $amount,
         string|Currency $currency,
-        RoundingMode $rounding = RoundingMode::HALF_UP
+        RoundingMode $rounding = RoundingMode::HalfUp
     ): self {
         $cur = \is_string($currency) ? Currency::of($currency) : $currency;
         // aplica la escala por defecto de la divisa (EUR=2, etc.)
@@ -85,12 +85,12 @@ final class Price implements Stringable, JsonSerializable
         return new self($this->money->minus($other->money));
     }
 
-    public function multiply(string|int|float $factor, RoundingMode $rounding = RoundingMode::HALF_UP): self
+    public function multiply(string|int|float $factor, RoundingMode $rounding = RoundingMode::HalfUp): self
     {
         return new self($this->money->multipliedBy((string)$factor, $rounding));
     }
 
-    public function divide(string|int|float $divisor, RoundingMode $rounding = RoundingMode::HALF_UP): self
+    public function divide(string|int|float $divisor, RoundingMode $rounding = RoundingMode::HalfUp): self
     {
         return new self($this->money->dividedBy((string)$divisor, $rounding));
     }
