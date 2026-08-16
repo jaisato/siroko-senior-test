@@ -8,6 +8,7 @@ use Siroko\Cart\Domain\Exception\InvalidQuantityException;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
+use Symfony\Component\HttpKernel\Exception\BadRequestHttpException;
 use Symfony\Component\Routing\Annotation\Route;
 
 class PostCartController extends AbstractController
@@ -30,6 +31,10 @@ class PostCartController extends AbstractController
     {
         $content = $request->getContent();
         $jsonData = json_decode($content, true);
+
+        if (!is_array($jsonData) || !isset($jsonData['products']) || !is_array($jsonData['products'])) {
+            throw new BadRequestHttpException('Missing or invalid "products" field');
+        }
 
         $cart = $this->commandBus->handle(
             new CreateCartCommand($jsonData['products'])

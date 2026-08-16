@@ -12,6 +12,7 @@ use Siroko\Cart\Domain\Repository\ProductRepository;
 use Siroko\Cart\Domain\ValueObject\CartStatus;
 use Siroko\Cart\Domain\ValueObject\Quantity;
 use Siroko\Cart\Infrastructure\Api\Dto\Cart\CartRead;
+use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
 class CreateCartCommandHandler
 {
@@ -40,8 +41,13 @@ class CreateCartCommandHandler
         );
 
         foreach ($command->getItems() as $item) {
-            /** @var Product $product */
+            /** @var Product|null $product */
             $product = $this->productRepository->ofId($item['productId']);
+
+            if ($product === null) {
+                throw new NotFoundHttpException("Product not found");
+            }
+
             /** @var Quantity $quantity */
             $quantity = $item['quantity'];
             for ($i = 0; $i < $quantity->asInt(); $i++) {
