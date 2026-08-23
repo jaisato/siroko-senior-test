@@ -4,6 +4,7 @@ namespace Siroko\Cart\Infrastructure\Api\Controller\Product;
 
 use Siroko\Cart\Application\Command\Product\CreateProductCommand;
 use Siroko\Cart\Domain\CommandBus\CommandBusWrite;
+use Siroko\Cart\Infrastructure\Api\JsonRequest;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -23,15 +24,17 @@ class PostProductController extends AbstractController
     #[Route('/v1/products', methods: ['POST'])]
     public function __invoke(Request $request): JsonResponse
     {
-        $requestContent = $request->getContent();
-        $jsonContent = json_decode($requestContent, true);
+        // Each of these five keys was read straight off the decoded body, so a
+        // request missing any one of them raised "Undefined array key" - an
+        // error in PHP 8 - and the caller got a 500 for what is a bad request.
+        $jsonContent = JsonRequest::toArray($request);
         $product = $this->commandBus->handle(
             new CreateProductCommand(
-                $jsonContent['code'],
-                $jsonContent['name'],
-                $jsonContent['priceAmount'],
-                $jsonContent['priceCurrency'],
-                $jsonContent['quantity']
+                JsonRequest::requireField($jsonContent, 'code'),
+                JsonRequest::requireField($jsonContent, 'name'),
+                JsonRequest::requireField($jsonContent, 'priceAmount'),
+                JsonRequest::requireField($jsonContent, 'priceCurrency'),
+                JsonRequest::requireField($jsonContent, 'quantity')
             )
         );
         return new JsonResponse($product, Response::HTTP_CREATED);

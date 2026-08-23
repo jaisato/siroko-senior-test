@@ -4,6 +4,7 @@ namespace Siroko\Cart\Infrastructure\Api\Controller\Cart;
 
 use Siroko\Cart\Application\Command\Cart\AddCartProductCommand;
 use Siroko\Cart\Domain\CommandBus\CommandBusWrite;
+use Siroko\Cart\Infrastructure\Api\ApiExceptionMapper;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\Routing\Annotation\Route;
@@ -15,6 +16,7 @@ class AddCartProductController extends AbstractController
      */
     public function __construct(
         private readonly CommandBusWrite $commandBus,
+        private readonly ApiExceptionMapper $errors,
     ) {
     }
 
@@ -33,7 +35,7 @@ class AddCartProductController extends AbstractController
 
             return new JsonResponse($cart);
         } catch (\Throwable $e) {
-            return new JsonResponse(['Exception' => $e->getMessage()], JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
+            return $this->errors->toResponse($e);
         }
     }
 }

@@ -36,6 +36,13 @@ services:
         resource: '../../../src/Cart/Infrastructure/Api/Controller'
         tags: [ 'controller.service_arguments' ]
 
+    # Maps an exception onto the API's error response. Registered next to the
+    # controllers that inject it; there is no broad App\ glob in this project,
+    # so a class under src/ is not a service until it is named here.
+    Siroko\Cart\Infrastructure\Api\ApiExceptionMapper:
+        arguments:
+            $logger: '@?logger'
+
     Siroko\Cart\Domain\Repository\ProductRepository: '@Siroko\Cart\Infrastructure\Persistence\Doctrine\Repository\DoctrineProductRepository'
     Siroko\Cart\Domain\Repository\CartRepository: '@Siroko\Cart\Infrastructure\Persistence\Doctrine\Repository\DoctrineCartRepository'
     Siroko\Cart\Domain\Repository\CartItemRepository: '@Siroko\Cart\Infrastructure\Persistence\Doctrine\Repository\DoctrineCartItemRepository'
