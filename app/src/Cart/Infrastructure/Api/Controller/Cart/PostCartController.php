@@ -31,6 +31,13 @@ class PostCartController extends AbstractController
         $content = $request->getContent();
         $jsonData = json_decode($content, true);
 
+        if ($jsonData === null || !isset($jsonData['products'])) {
+            return new JsonResponse(
+                ['error' => 'Invalid request body. A valid JSON with a "products" key is required.'],
+                JsonResponse::HTTP_BAD_REQUEST
+            );
+        }
+
         $cart = $this->commandBus->handle(
             new CreateCartCommand($jsonData['products'])
         );
