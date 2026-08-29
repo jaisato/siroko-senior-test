@@ -51,14 +51,37 @@ final class JsonRequest
 
     /**
      * @param array<string,mixed> $data
-     * @return array<mixed>
+     * @param list<string>        $itemKeys keys every entry must carry, for a list
+     *                                      whose entries are themselves objects
+     * @return list<mixed>
      */
-    public static function requireList(array $data, string $field): array
+    public static function requireList(array $data, string $field, array $itemKeys = []): array
     {
         $value = self::requireField($data, $field);
 
-        if (!is_array($value)) {
+        // json_decode(..., true) represents a JSON object as a PHP array just as
+        // it does a JSON array, so is_array() alone accepts {"productId":"x",
+        // "quantity":1} where a list belongs. The command then iterates that
+        // object's values and indexes each one as an entry, which is a TypeError
+        // - HTTP 500 for what is a malformed request.
+        if (!is_array($value) || !array_is_list($value)) {
             throw new BadRequestHttpException(sprintf('The field "%s" must be a list.', $field));
+        }
+
+        foreach ($value as $index => $item) {
+            if ($itemKeys !== [] && !is_array($item)) {
+                throw new BadRequestHttpException(
+                    sprintf('Entry %d of "%s" must be an object.', $index, $field)
+                );
+            }
+
+            foreach ($itemKeys as $key) {
+                if (!array_key_exists($key, $item) || $item[$key] === null || $item[$key] === '') {
+                    throw new BadRequestHttpException(
+                        sprintf('Entry %d of "%s" is missing the field "%s".', $index, $field, $key)
+                    );
+                }
+            }
         }
 
         return $value;
