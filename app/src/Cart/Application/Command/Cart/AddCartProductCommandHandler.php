@@ -4,6 +4,7 @@ namespace Siroko\Cart\Application\Command\Cart;
 
 use Brick\Money\Exception\UnknownCurrencyException;
 use Siroko\Cart\Domain\Entity\CartItem;
+use Siroko\Cart\Domain\Exception\OutOfStockException;
 use Siroko\Cart\Domain\Repository\CartItemRepository;
 use Siroko\Cart\Domain\Repository\CartRepository;
 use Siroko\Cart\Domain\Repository\ProductRepository;
@@ -44,8 +45,16 @@ class AddCartProductCommandHandler
             throw new NotFoundHttpException("Product not found");
         }
 
-        $newQuantity = new Quantity($product->quantity()->asInt() - 1);
-        $product->setQuantity($newQuantity);
+        // Reserve one unit. Checking first turns "there are none left" into an
+        // answer the caller can act on: without it the subtraction reached
+        // `new Quantity(-1)` and the client was told "Quantity must be greater
+        // or equal to 0" with HTTP 400 - an internal invariant, reported as a
+        // malformed request, for a request that was fine.
+        if ($product->quantity()->asInt() <= Quantity::MIN_QUANTITY) {
+            throw new OutOfStockException('Product is out of stock');
+        }
+
+        $product->setQuantity(Quantity::decrement($product->quantity()));
 
         $this->productRepository->save($product);
 
