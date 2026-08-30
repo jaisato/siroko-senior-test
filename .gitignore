@@ -1,0 +1,3 @@
+
+# PHPUnit writes this on every run; it is per-machine state, not source.
+/app/.phpunit.result.cache

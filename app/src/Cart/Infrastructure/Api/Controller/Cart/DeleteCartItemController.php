@@ -4,6 +4,7 @@ namespace Siroko\Cart\Infrastructure\Api\Controller\Cart;
 
 use Siroko\Cart\Application\Command\Cart\DeleteCartItemCommand;
 use Siroko\Cart\Domain\CommandBus\CommandBusWrite;
+use Siroko\Cart\Infrastructure\Api\ApiExceptionMapper;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\Routing\Annotation\Route;
@@ -15,6 +16,7 @@ class DeleteCartItemController extends AbstractController
      */
     public function __construct(
         private readonly CommandBusWrite $commandBus,
+        private readonly ApiExceptionMapper $errors,
     ) {
     }
 
@@ -30,8 +32,8 @@ class DeleteCartItemController extends AbstractController
             $this->commandBus->handle(
                 new DeleteCartItemCommand($cartId, $itemId)
             );
-        } catch (\Exception $ex) {
-            return new JsonResponse(['exception' => $ex->getMessage()], JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
+        } catch (\Throwable $ex) {
+            return $this->errors->toResponse($ex);
         }
 
         return new JsonResponse([], JsonResponse::HTTP_NO_CONTENT);
