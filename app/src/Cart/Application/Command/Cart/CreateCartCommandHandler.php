@@ -12,6 +12,7 @@ use Siroko\Cart\Domain\Exception\OutOfStockException;
 use Siroko\Cart\Domain\Repository\ProductRepository;
 use Siroko\Cart\Domain\Transaction\TransactionalSession;
 use Siroko\Cart\Domain\ValueObject\CartStatus;
+use Siroko\Cart\Domain\ValueObject\ProductId;
 use Siroko\Cart\Domain\ValueObject\Quantity;
 use Siroko\Cart\Infrastructure\Api\Dto\Cart\CartRead;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
@@ -54,7 +55,7 @@ class CreateCartCommandHandler
         // carrito son una sola operación, y si falla a medias no puede quedar
         // stock reservado sin carrito que lo justifique.
         $this->session->executeAtomically(function () use ($cart, $command): void {
-            foreach ($command->getItems() as $item) {
+            foreach ($this->inLockOrder($command->getItems()) as $item) {
                 /** @var Product|null $product */
                 $product = $this->productRepository->ofId($item['productId']);
 
@@ -91,5 +92,39 @@ class CreateCartCommandHandler
         });
 
         return CartRead::fromModel($cart);
+    }
+
+    /**
+     * Ordena las líneas por id de producto, que es el orden en el que se toman
+     * los cerrojos de fila.
+     *
+     * Reservando en el orden en que llegan en la petición, dos altas de carrito
+     * con los mismos productos en orden contrario se interbloqueaban: cada
+     * transacción bloqueaba su primer producto y esperaba al que tenía la otra.
+     * MySQL aborta una de las dos, y el bus de escritura no reintenta, así que
+     * una petición perfectamente válida devolvía un 500.
+     *
+     * Que todas las transacciones recorran los productos en el mismo orden
+     * elimina el ciclo de espera: la que llega segunda espera a la primera y
+     * sigue. Cuál sea ese orden da igual mientras sea el mismo para todas; el
+     * id sirve y no depende de nada externo. Líneas repetidas del mismo
+     * producto quedan juntas, y volver a bloquear una fila que ya tiene esta
+     * misma transacción no cuesta nada.
+     *
+     * @param array<int, array{productId: ProductId, quantity: Quantity}> $items
+     *
+     * @return array<int, array{productId: ProductId, quantity: Quantity}>
+     */
+    private function inLockOrder(array $items): array
+    {
+        usort(
+            $items,
+            static fn (array $a, array $b): int => strcmp(
+                $a['productId']->toString(),
+                $b['productId']->toString()
+            )
+        );
+
+        return $items;
     }
 }
