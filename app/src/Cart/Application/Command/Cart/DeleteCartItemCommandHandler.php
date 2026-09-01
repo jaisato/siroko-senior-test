@@ -37,12 +37,22 @@ class DeleteCartItemCommandHandler
      * después, quedaba la línea en el carrito con la unidad ya devuelta -y el
      * reintento la devolvía otra vez-.
      *
+     * Dentro de la transacción se bloquean el carrito y la línea, en ese orden.
+     * El orden importa: el checkout bloquea sólo el carrito, así que tomando
+     * siempre antes el del carrito no hay ciclo de espera entre las dos
+     * operaciones.
+     *
      * @param DeleteCartItemCommand $command
      * @return void
      */
     public function __invoke(DeleteCartItemCommand $command): void
     {
         $this->session->executeAtomically(function () use ($command): void {
+            // Primero el carrito, después la línea. Ese orden es el que evita
+            // el interbloqueo: cualquier operación que toque los dos toma
+            // siempre antes el del carrito, así que no hay ciclo de espera.
+            $cart = $this->cartRepository->ofIdForUpdate($command->cartId());
+
             $item = $this->cartItemRepository->ofIdForUpdate($command->itemId());
 
             // La línea se carga con su fila bloqueada. Dos DELETE simultáneos
@@ -63,9 +73,17 @@ class DeleteCartItemCommandHandler
             // La comprobación va dentro de la transacción, junto a la
             // escritura: leer el estado del carrito fuera dejaba una ventana
             // para que se pagara entre la lectura y la devolución.
-            if ($item !== null
-                && $item->getCart()->id()->toString() === $command->cartId()->toString()
-                && $item->getCart()->status()->toInt() === CartStatus::PENDING
+            //
+            // Y el estado se lee del carrito bloqueado, no del que cuelga de la
+            // línea: bloquear sólo la línea no serializa nada frente al
+            // checkout, que ni siquiera la mira. Los dos podían leer el carrito
+            // pendiente a la vez, el checkout confirmar un carrito pagado que
+            // todavía contenía la línea, y este handler devolver después el
+            // stock de una unidad ya vendida.
+            if ($cart !== null
+                && $item !== null
+                && $item->getCart()->id()->toString() === $cart->id()->toString()
+                && $cart->status()->toInt() === CartStatus::PENDING
             ) {
                 $this->productRepository->returnStock($item->getProduct()->id(), 1);
             }

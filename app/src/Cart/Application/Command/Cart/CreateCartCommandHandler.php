@@ -14,6 +14,7 @@ use Siroko\Cart\Domain\Transaction\TransactionalSession;
 use Siroko\Cart\Domain\ValueObject\CartStatus;
 use Siroko\Cart\Domain\ValueObject\Quantity;
 use Siroko\Cart\Infrastructure\Api\Dto\Cart\CartRead;
+use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
 class CreateCartCommandHandler
 {
@@ -54,8 +55,19 @@ class CreateCartCommandHandler
         // stock reservado sin carrito que lo justifique.
         $this->session->executeAtomically(function () use ($cart, $command): void {
             foreach ($command->getItems() as $item) {
-                /** @var Product $product */
+                /** @var Product|null $product */
                 $product = $this->productRepository->ofId($item['productId']);
+
+                // `ofId()` devuelve null para un id que no existe, y la
+                // anotación `@var Product` no lo impedía: la siguiente línea
+                // llamaba a `id()` sobre null y el cliente recibía un 500 por
+                // haber pedido un producto inexistente.
+                if ($product === null) {
+                    throw new NotFoundHttpException(
+                        sprintf('Product %s not found', $item['productId']->toString())
+                    );
+                }
+
                 /** @var Quantity $quantity */
                 $quantity = $item['quantity'];
 

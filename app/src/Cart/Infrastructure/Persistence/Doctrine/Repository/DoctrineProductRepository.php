@@ -50,6 +50,8 @@ class DoctrineProductRepository implements ProductRepository
      */
     public function returnStock(ProductId $id, int $units): void
     {
+        $this->guardUnits($units);
+
         $this->em->getConnection()->executeStatement(
             'UPDATE product SET quantity = quantity + :units WHERE id = :id',
             ['units' => $units, 'id' => $id],
@@ -64,6 +66,8 @@ class DoctrineProductRepository implements ProductRepository
      */
     public function reserveStock(ProductId $id, int $units): bool
     {
+        $this->guardUnits($units);
+
         $affected = $this->em->getConnection()->executeStatement(
             'UPDATE product SET quantity = quantity - :units WHERE id = :id AND quantity >= :units',
             ['units' => $units, 'id' => $id],
@@ -71,6 +75,26 @@ class DoctrineProductRepository implements ProductRepository
         );
 
         return $affected === 1;
+    }
+
+    /**
+     * Las dos operaciones de stock declaran `positive-int` y el SQL cuenta con
+     * ello. Con 0 unidades el UPDATE no cambia ninguna fila, y `rowCount()` a 0
+     * es indistinguible de "no había stock", así que una reserva de 0 se
+     * reportaba como falta de stock sobre un producto disponible. Con unidades
+     * negativas es peor: `quantity >= -5` se cumple siempre y la resta suma,
+     * de modo que una reserva inventaría stock y además diría que fue bien.
+     *
+     * Ninguno de los dos casos es una petición del cliente -las entradas se
+     * validan antes-, sino un error de programación, y como tal se señala.
+     */
+    private function guardUnits(int $units): void
+    {
+        if ($units < 1) {
+            throw new \InvalidArgumentException(
+                sprintf('Stock movements need at least one unit, got %d.', $units)
+            );
+        }
     }
 
     /**

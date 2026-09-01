@@ -12,7 +12,6 @@ use Siroko\Cart\Domain\Entity\Product;
 use Siroko\Cart\Domain\Repository\CartItemRepository;
 use Siroko\Cart\Domain\Repository\CartRepository;
 use Siroko\Cart\Domain\Repository\ProductRepository;
-use Siroko\Cart\Domain\Transaction\TransactionalSession;
 use Siroko\Cart\Domain\ValueObject\CartId;
 use Siroko\Cart\Domain\ValueObject\CartStatus;
 use Siroko\Cart\Domain\ValueObject\ItemId;
@@ -32,27 +31,25 @@ final class DeleteCartItemCommandHandlerTest extends TestCase
     /** @var list<array{0:string,1:int}> stock credited, as (productId, units) */
     private array $returned = [];
 
+    /** @var list<string> rows locked, in the order the handler asked for them */
+    private array $locked = [];
+
     private RecordingSession $session;
 
     protected function setUp(): void
     {
         $this->returned = [];
+        $this->locked = [];
         $this->session = new RecordingSession();
     }
 
     public function test_removing_an_item_returns_its_reserved_unit_to_the_product(): void
     {
         $product = $this->product(quantity: 4);
-        $cart = new Cart(CartId::fromString(Uuid::uuid4()->toString()), new CartStatus(CartStatus::PENDING));
-        $item = new CartItem(ItemId::fromString(Uuid::uuid4()->toString()), $product);
-        $cart->addItem($item);
+        $cart = $this->cart(CartStatus::PENDING);
+        $item = $this->itemIn($cart, $product);
 
-        $handler = new DeleteCartItemCommandHandler(
-            $this->expectsRemoval(),
-            $this->itemRepositoryReturning($item),
-            $this->recordingProducts(),
-            $this->session,
-        );
+        $handler = $this->handler($cart, $item);
 
         $handler(new DeleteCartItemCommand($cart->id()->toString(), $item->id()->toString()));
 
@@ -67,18 +64,14 @@ final class DeleteCartItemCommandHandlerTest extends TestCase
     public function test_an_item_belonging_to_another_cart_does_not_credit_stock(): void
     {
         $product = $this->product(quantity: 4);
-        $otherCart = new Cart(CartId::fromString(Uuid::uuid4()->toString()), new CartStatus(CartStatus::PENDING));
-        $item = new CartItem(ItemId::fromString(Uuid::uuid4()->toString()), $product);
-        $otherCart->addItem($item);
+        $otherCart = $this->cart(CartStatus::PENDING);
+        $item = $this->itemIn($otherCart, $product);
 
-        $handler = new DeleteCartItemCommandHandler(
-            $this->expectsRemoval(),
-            $this->itemRepositoryReturning($item),
-            $this->recordingProducts(),
-            $this->session,
-        );
+        $targetCart = $this->cart(CartStatus::PENDING);
 
-        $handler(new DeleteCartItemCommand(Uuid::uuid4()->toString(), $item->id()->toString()));
+        $handler = $this->handler($targetCart, $item);
+
+        $handler(new DeleteCartItemCommand($targetCart->id()->toString(), $item->id()->toString()));
 
         self::assertSame([], $this->returned);
     }
@@ -87,16 +80,10 @@ final class DeleteCartItemCommandHandlerTest extends TestCase
     public function test_a_paid_cart_does_not_credit_stock(): void
     {
         $product = $this->product(quantity: 4);
-        $cart = new Cart(CartId::fromString(Uuid::uuid4()->toString()), new CartStatus(CartStatus::PAID));
-        $item = new CartItem(ItemId::fromString(Uuid::uuid4()->toString()), $product);
-        $cart->addItem($item);
+        $cart = $this->cart(CartStatus::PAID);
+        $item = $this->itemIn($cart, $product);
 
-        $handler = new DeleteCartItemCommandHandler(
-            $this->expectsRemoval(),
-            $this->itemRepositoryReturning($item),
-            $this->recordingProducts(),
-            $this->session,
-        );
+        $handler = $this->handler($cart, $item);
 
         $handler(new DeleteCartItemCommand($cart->id()->toString(), $item->id()->toString()));
 
@@ -105,17 +92,24 @@ final class DeleteCartItemCommandHandlerTest extends TestCase
 
     public function test_an_unknown_item_is_a_no_op_for_stock(): void
     {
-        $items = $this->createStub(CartItemRepository::class);
-        $items->method('ofIdForUpdate')->willReturn(null);
+        $cart = $this->cart(CartStatus::PENDING);
 
-        $handler = new DeleteCartItemCommandHandler(
-            $this->expectsRemoval(),
-            $items,
-            $this->recordingProducts(),
-            $this->session,
-        );
+        $handler = $this->handler($cart, null);
 
-        $handler(new DeleteCartItemCommand(Uuid::uuid4()->toString(), Uuid::uuid4()->toString()));
+        $handler(new DeleteCartItemCommand($cart->id()->toString(), Uuid::uuid4()->toString()));
+
+        self::assertSame([], $this->returned);
+    }
+
+    public function test_an_unknown_cart_is_a_no_op_for_stock(): void
+    {
+        $product = $this->product(quantity: 4);
+        $cart = $this->cart(CartStatus::PENDING);
+        $item = $this->itemIn($cart, $product);
+
+        $handler = $this->handler(null, $item);
+
+        $handler(new DeleteCartItemCommand($cart->id()->toString(), $item->id()->toString()));
 
         self::assertSame([], $this->returned);
     }
@@ -130,34 +124,65 @@ final class DeleteCartItemCommandHandlerTest extends TestCase
     public function test_the_item_row_is_locked_before_its_stock_is_returned(): void
     {
         $product = $this->product(quantity: 4);
-        $cart = new Cart(CartId::fromString(Uuid::uuid4()->toString()), new CartStatus(CartStatus::PENDING));
-        $item = new CartItem(ItemId::fromString(Uuid::uuid4()->toString()), $product);
-        $cart->addItem($item);
+        $cart = $this->cart(CartStatus::PENDING);
+        $item = $this->itemIn($cart, $product);
 
-        $locked = [];
-        $items = $this->createStub(CartItemRepository::class);
-        $items->method('ofIdForUpdate')->willReturnCallback(
-            function ($id) use ($item, &$locked) {
-                $locked[] = $id->toString();
-
-                return $item;
-            }
-        );
-        // El camino sin bloqueo no debe usarse.
-        $items->method('ofId')->willReturnCallback(
-            static fn () => self::fail('the item must be loaded with its row locked')
-        );
-
-        $handler = new DeleteCartItemCommandHandler(
-            $this->expectsRemoval(),
-            $items,
-            $this->recordingProducts(),
-            $this->session,
-        );
+        $handler = $this->handler($cart, $item);
 
         $handler(new DeleteCartItemCommand($cart->id()->toString(), $item->id()->toString()));
 
-        self::assertSame([$item->id()->toString()], $locked);
+        self::assertContains('item:' . $item->id()->toString(), $this->locked);
+    }
+
+    /**
+     * El estado que decide si se devuelve stock se lee del carrito bloqueado, y
+     * el carrito se bloquea antes que la línea.
+     *
+     * Bloquear sólo la línea no serializaba nada frente al checkout, que ni
+     * siquiera la mira: los dos podían leer el carrito pendiente a la vez, el
+     * checkout confirmar un carrito pagado que todavía contenía la línea, y
+     * este handler devolver después al stock una unidad ya vendida.
+     *
+     * El orden -carrito y luego línea- es lo que evita el interbloqueo, porque
+     * es el mismo que toma cualquier otra operación sobre los dos.
+     */
+    public function test_the_cart_row_is_locked_before_the_item_row(): void
+    {
+        $product = $this->product(quantity: 4);
+        $cart = $this->cart(CartStatus::PENDING);
+        $item = $this->itemIn($cart, $product);
+
+        $handler = $this->handler($cart, $item);
+
+        $handler(new DeleteCartItemCommand($cart->id()->toString(), $item->id()->toString()));
+
+        self::assertSame(
+            ['cart:' . $cart->id()->toString(), 'item:' . $item->id()->toString()],
+            $this->locked,
+            'the cart lock is taken first, then the item lock',
+        );
+    }
+
+    /**
+     * Si el carrito bloqueado ya está pagado, no se devuelve stock aunque la
+     * línea siga apuntando en memoria a un carrito pendiente: quien manda es la
+     * lectura hecha bajo el bloqueo, que es la que ve el checkout confirmado.
+     */
+    public function test_the_status_comes_from_the_locked_cart_not_from_the_item(): void
+    {
+        $product = $this->product(quantity: 4);
+        $staleCart = $this->cart(CartStatus::PENDING);
+        $item = $this->itemIn($staleCart, $product);
+
+        // Misma identidad, estado ya pagado: es lo que devuelve la lectura
+        // bloqueada cuando el checkout ha ganado la carrera.
+        $lockedCart = new Cart($staleCart->id(), new CartStatus(CartStatus::PAID));
+
+        $handler = $this->handler($lockedCart, $item);
+
+        $handler(new DeleteCartItemCommand($staleCart->id()->toString(), $item->id()->toString()));
+
+        self::assertSame([], $this->returned);
     }
 
     /**
@@ -168,16 +193,10 @@ final class DeleteCartItemCommandHandlerTest extends TestCase
     public function test_both_writes_happen_inside_one_transaction(): void
     {
         $product = $this->product(quantity: 4);
-        $cart = new Cart(CartId::fromString(Uuid::uuid4()->toString()), new CartStatus(CartStatus::PENDING));
-        $item = new CartItem(ItemId::fromString(Uuid::uuid4()->toString()), $product);
-        $cart->addItem($item);
+        $cart = $this->cart(CartStatus::PENDING);
+        $item = $this->itemIn($cart, $product);
 
-        $handler = new DeleteCartItemCommandHandler(
-            $this->expectsRemoval(),
-            $this->itemRepositoryReturning($item),
-            $this->recordingProducts(),
-            $this->session,
-        );
+        $handler = $this->handler($cart, $item);
 
         $handler(new DeleteCartItemCommand($cart->id()->toString(), $item->id()->toString()));
 
@@ -187,6 +206,19 @@ final class DeleteCartItemCommandHandlerTest extends TestCase
             $this->session->log,
             'both writes happened between begin and commit',
         );
+    }
+
+    private function cart(int $status): Cart
+    {
+        return new Cart(CartId::fromString(Uuid::uuid4()->toString()), new CartStatus($status));
+    }
+
+    private function itemIn(Cart $cart, Product $product): CartItem
+    {
+        $item = new CartItem(ItemId::fromString(Uuid::uuid4()->toString()), $product);
+        $cart->addItem($item);
+
+        return $item;
     }
 
     private function product(int $quantity): Product
@@ -200,17 +232,47 @@ final class DeleteCartItemCommandHandlerTest extends TestCase
         );
     }
 
-    private function itemRepositoryReturning(CartItem $item): CartItemRepository
+    private function handler(?Cart $lockedCart, ?CartItem $lockedItem): DeleteCartItemCommandHandler
+    {
+        return new DeleteCartItemCommandHandler(
+            $this->carts($lockedCart),
+            $this->items($lockedItem),
+            $this->recordingProducts(),
+            $this->session,
+        );
+    }
+
+    private function items(?CartItem $item): CartItemRepository
     {
         $items = $this->createStub(CartItemRepository::class);
-        $items->method('ofIdForUpdate')->willReturn($item);
+        $items->method('ofIdForUpdate')->willReturnCallback(
+            function ($id) use ($item): ?CartItem {
+                $this->locked[] = 'item:' . $id->toString();
+
+                return $item;
+            }
+        );
+        // El camino sin bloqueo no debe usarse.
+        $items->method('ofId')->willReturnCallback(
+            static fn () => self::fail('the item must be loaded with its row locked')
+        );
 
         return $items;
     }
 
-    private function expectsRemoval(): CartRepository
+    private function carts(?Cart $cart): CartRepository
     {
         $carts = $this->createStub(CartRepository::class);
+        $carts->method('ofIdForUpdate')->willReturnCallback(
+            function ($id) use ($cart): ?Cart {
+                $this->locked[] = 'cart:' . $id->toString();
+
+                return $cart;
+            }
+        );
+        $carts->method('ofId')->willReturnCallback(
+            static fn () => self::fail('the cart must be loaded with its row locked')
+        );
         $carts->method('removeItem')->willReturnCallback(
             function (): void {
                 $this->session->log[] = 'removeItem';
@@ -236,29 +298,5 @@ final class DeleteCartItemCommandHandlerTest extends TestCase
         );
 
         return $products;
-    }
-}
-
-/**
- * Stands in for the Doctrine session, recording that the handler asked for one
- * transaction and that both writes happened inside it.
- */
-final class RecordingSession implements TransactionalSession
-{
-    public int $transactions = 0;
-
-    /** @var list<string> */
-    public array $log = [];
-
-    public function executeAtomically(callable $operation): mixed
-    {
-        $this->transactions++;
-        $this->log[] = 'begin';
-
-        $result = $operation();
-
-        $this->log[] = 'commit';
-
-        return $result;
     }
 }
