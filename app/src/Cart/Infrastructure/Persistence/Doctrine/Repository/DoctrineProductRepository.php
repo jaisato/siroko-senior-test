@@ -58,6 +58,22 @@ class DoctrineProductRepository implements ProductRepository
     }
 
     /**
+     * Un único UPDATE condicional: comprobar y restar son la misma operación,
+     * de modo que dos altas simultáneas no pueden pasar las dos la comprobación
+     * y vender de más. `rowCount()` distingue "reservado" de "no había stock".
+     */
+    public function reserveStock(ProductId $id, int $units): bool
+    {
+        $affected = $this->em->getConnection()->executeStatement(
+            'UPDATE product SET quantity = quantity - :units WHERE id = :id AND quantity >= :units',
+            ['units' => $units, 'id' => $id],
+            ['units' => ParameterType::INTEGER, 'id' => ProductIdType::NAME]
+        );
+
+        return $affected === 1;
+    }
+
+    /**
      * @param ProductId $id
      * @return Product|null
      */

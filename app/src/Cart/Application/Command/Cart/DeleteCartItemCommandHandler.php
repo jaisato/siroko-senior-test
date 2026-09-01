@@ -43,8 +43,16 @@ class DeleteCartItemCommandHandler
     public function __invoke(DeleteCartItemCommand $command): void
     {
         $this->session->executeAtomically(function () use ($command): void {
-            $item = $this->cartItemRepository->ofId($command->itemId());
+            $item = $this->cartItemRepository->ofIdForUpdate($command->itemId());
 
+            // La línea se carga con su fila bloqueada. Dos DELETE simultáneos
+            // de la misma línea leían los dos que estaba ahí y pendiente, así
+            // que los dos devolvían stock; el segundo borrado ya no afectaba a
+            // ninguna fila -Doctrine no lo trata como error- y su incremento se
+            // confirmaba igual, sacando una unidad de la nada. Es el mismo caso
+            // que la comprobación de pertenencia evita para un DELETE repetido,
+            // llegando por concurrencia en vez de por reintento.
+            //
             // Only give the unit back for an item that really is in this cart
             // and whose cart is still pending. Skipping the ownership check
             // would let a repeated or mistargeted delete mint stock out of

@@ -106,7 +106,7 @@ final class DeleteCartItemCommandHandlerTest extends TestCase
     public function test_an_unknown_item_is_a_no_op_for_stock(): void
     {
         $items = $this->createStub(CartItemRepository::class);
-        $items->method('ofId')->willReturn(null);
+        $items->method('ofIdForUpdate')->willReturn(null);
 
         $handler = new DeleteCartItemCommandHandler(
             $this->expectsRemoval(),
@@ -118,6 +118,46 @@ final class DeleteCartItemCommandHandlerTest extends TestCase
         $handler(new DeleteCartItemCommand(Uuid::uuid4()->toString(), Uuid::uuid4()->toString()));
 
         self::assertSame([], $this->returned);
+    }
+
+    /**
+     * Dos DELETE simultáneos de la misma línea leían los dos que estaba ahí y
+     * pendiente, así que los dos devolvían stock: el segundo borrado ya no
+     * afectaba a ninguna fila y su incremento se confirmaba igual. La línea se
+     * carga bloqueando su fila para que la segunda transacción la vea ya
+     * borrada.
+     */
+    public function test_the_item_row_is_locked_before_its_stock_is_returned(): void
+    {
+        $product = $this->product(quantity: 4);
+        $cart = new Cart(CartId::fromString(Uuid::uuid4()->toString()), new CartStatus(CartStatus::PENDING));
+        $item = new CartItem(ItemId::fromString(Uuid::uuid4()->toString()), $product);
+        $cart->addItem($item);
+
+        $locked = [];
+        $items = $this->createStub(CartItemRepository::class);
+        $items->method('ofIdForUpdate')->willReturnCallback(
+            function ($id) use ($item, &$locked) {
+                $locked[] = $id->toString();
+
+                return $item;
+            }
+        );
+        // El camino sin bloqueo no debe usarse.
+        $items->method('ofId')->willReturnCallback(
+            static fn () => self::fail('the item must be loaded with its row locked')
+        );
+
+        $handler = new DeleteCartItemCommandHandler(
+            $this->expectsRemoval(),
+            $items,
+            $this->recordingProducts(),
+            $this->session,
+        );
+
+        $handler(new DeleteCartItemCommand($cart->id()->toString(), $item->id()->toString()));
+
+        self::assertSame([$item->id()->toString()], $locked);
     }
 
     /**
@@ -163,7 +203,7 @@ final class DeleteCartItemCommandHandlerTest extends TestCase
     private function itemRepositoryReturning(CartItem $item): CartItemRepository
     {
         $items = $this->createStub(CartItemRepository::class);
-        $items->method('ofId')->willReturn($item);
+        $items->method('ofIdForUpdate')->willReturn($item);
 
         return $items;
     }

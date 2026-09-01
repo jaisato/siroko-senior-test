@@ -8,7 +8,7 @@ use Siroko\Cart\Domain\Exception\OutOfStockException;
 use Siroko\Cart\Domain\Repository\CartItemRepository;
 use Siroko\Cart\Domain\Repository\CartRepository;
 use Siroko\Cart\Domain\Repository\ProductRepository;
-use Siroko\Cart\Domain\ValueObject\Quantity;
+use Siroko\Cart\Domain\Transaction\TransactionalSession;
 use Siroko\Cart\Infrastructure\Api\Dto\Cart\CartRead;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
@@ -23,6 +23,7 @@ class AddCartProductCommandHandler
         private readonly CartRepository $cartRepository,
         private readonly ProductRepository $productRepository,
         private readonly CartItemRepository $cartItemRepository,
+        private readonly TransactionalSession $session,
     ) {
     }
 
@@ -45,27 +46,32 @@ class AddCartProductCommandHandler
             throw new NotFoundHttpException("Product not found");
         }
 
-        // Reserve one unit. Checking first turns "there are none left" into an
-        // answer the caller can act on: without it the subtraction reached
-        // `new Quantity(-1)` and the client was told "Quantity must be greater
-        // or equal to 0" with HTTP 400 - an internal invariant, reported as a
-        // malformed request, for a request that was fine.
-        if ($product->quantity()->asInt() <= Quantity::MIN_QUANTITY) {
-            throw new OutOfStockException('Product is out of stock');
-        }
+        // Reserva atómica. Comprobar el stock y restarlo tienen que ser la
+        // misma operación: separadas, dos altas simultáneas pasan las dos la
+        // comprobación y venden más unidades de las que hay. Y tiene que ser un
+        // ajuste relativo, no un `setQuantity()` con un valor absoluto
+        // calculado sobre la lectura de arriba, porque eso borra las
+        // devoluciones de stock que confirme otra petición entre medias.
+        //
+        // Que no haya stock sigue siendo una respuesta que el cliente puede
+        // entender: sin esto, la resta llegaba a `new Quantity(-1)` y se le
+        // decía "Quantity must be greater or equal to 0" con un 400 -una
+        // invariante interna, presentada como petición mal formada, para una
+        // petición que estaba bien-.
+        $this->session->executeAtomically(function () use ($cart, $product): void {
+            if (!$this->productRepository->reserveStock($product->id(), 1)) {
+                throw new OutOfStockException('Product is out of stock');
+            }
 
-        $product->setQuantity(Quantity::decrement($product->quantity()));
+            $cart->addItem(
+                new CartItem(
+                    $this->cartItemRepository->nextIdentity(),
+                    $product
+                )
+            );
 
-        $this->productRepository->save($product);
-
-        $cart->addItem(
-            new CartItem(
-                $this->cartItemRepository->nextIdentity(),
-                $product
-            )
-        );
-
-        $this->cartRepository->save($cart);
+            $this->cartRepository->save($cart);
+        });
 
         return CartRead::fromModel($cart);
     }

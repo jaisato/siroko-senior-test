@@ -31,7 +31,13 @@ final class CartItemRead
             id: $item->id()->toString(),
             name: $item->getProduct()->name()->toString(),
             code: $item->getProduct()->code()->toString(),
-            price: $item->getProduct()->price()->toMoney()->formatTo('es_ES'),
+            // `formatTo()` no existe en brick/money 0.14, la versión fijada en
+            // composer.lock: se renombró a `formatToLocale()`. Llamarla lanzaba
+            // "Call to undefined method Brick\Money\Money::formatTo()", y como
+            // CartRead::fromModel() es la respuesta de crear carrito, añadir
+            // producto, consultar carrito y hacer checkout, los cuatro
+            // endpoints reventaban.
+            price: $item->getProduct()->price()->toMoney()->formatToLocale('es_ES'),
         );
     }
 }

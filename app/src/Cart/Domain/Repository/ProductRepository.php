@@ -42,6 +42,28 @@ interface ProductRepository
     public function returnStock(ProductId $id, int $units): void;
 
     /**
+     * Reserva unidades de stock de forma atómica. Devuelve false si no había
+     * suficientes.
+     *
+     * Contrapartida de `returnStock()`, y tiene que serlo: mientras el resto de
+     * escrituras de stock fueran `ofId()` + `setQuantity()` + `save()`, un
+     * incremento atómico no servía de nada, porque esa escritura manda un valor
+     * absoluto calculado sobre una lectura vieja y borra el incremento. Con
+     * stock 4: un borrado lo sube a 5 y un alta que había leído 4 lo deja en 3,
+     * cuando debía quedar en 4.
+     *
+     * La condición `quantity >= :units` va dentro del propio UPDATE, así que
+     * comprobar y restar son la misma operación. Separarlas -mirar si hay stock
+     * y luego restarlo- permite que dos altas simultáneas pasen las dos la
+     * comprobación y vendan más unidades de las que hay.
+     *
+     * @param positive-int $units
+     *
+     * @return bool true si se reservaron; false si no había stock suficiente
+     */
+    public function reserveStock(ProductId $id, int $units): bool;
+
+    /**
      * @param int $pageNumber
      * @param int $pageSize
      * @return array|Product[]
