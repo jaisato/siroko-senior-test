@@ -2,6 +2,7 @@
 
 namespace Siroko\Cart\Infrastructure\Persistence\Doctrine\Repository;
 
+use Doctrine\DBAL\ParameterType;
 use Doctrine\ORM\EntityManagerInterface;
 use Ramsey\Uuid\Uuid;
 use Siroko\Cart\Domain\Entity\Product;
@@ -35,6 +36,25 @@ class DoctrineProductRepository implements ProductRepository
     {
         $this->em->persist($product);
         $this->em->flush();
+    }
+
+    /**
+     * Un único UPDATE, para que dos borrados simultáneos del mismo producto no
+     * se pisen el incremento. `quantity` es una columna INT, así que la suma se
+     * hace en la base de datos; el id va con su tipo registrado para que se
+     * convierta a los 16 bytes con los que está guardado.
+     *
+     * Se salta la entidad a propósito: un incremento atómico no puede pasar por
+     * el objeto en memoria. No pone en riesgo la invariante de `Quantity`, que
+     * es no ser negativa, porque esto sólo suma.
+     */
+    public function returnStock(ProductId $id, int $units): void
+    {
+        $this->em->getConnection()->executeStatement(
+            'UPDATE product SET quantity = quantity + :units WHERE id = :id',
+            ['units' => $units, 'id' => $id],
+            ['units' => ParameterType::INTEGER, 'id' => ProductIdType::NAME]
+        );
     }
 
     /**
