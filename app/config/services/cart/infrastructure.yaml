@@ -46,3 +46,9 @@ services:
     Siroko\Cart\Domain\Repository\ProductRepository: '@Siroko\Cart\Infrastructure\Persistence\Doctrine\Repository\DoctrineProductRepository'
     Siroko\Cart\Domain\Repository\CartRepository: '@Siroko\Cart\Infrastructure\Persistence\Doctrine\Repository\DoctrineCartRepository'
     Siroko\Cart\Domain\Repository\CartItemRepository: '@Siroko\Cart\Infrastructure\Persistence\Doctrine\Repository\DoctrineCartItemRepository'
+
+    # Deja que un handler pida que varias escrituras vayan juntas. El bus de
+    # escritura sólo lleva doctrine_rollback_only, que marca para rollback una
+    # transacción abierta pero no abre ninguna.
+    Siroko\Cart\Infrastructure\Persistence\Doctrine\DoctrineTransactionalSession: ~
+    Siroko\Cart\Domain\Transaction\TransactionalSession: '@Siroko\Cart\Infrastructure\Persistence\Doctrine\DoctrineTransactionalSession'

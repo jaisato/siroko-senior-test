@@ -2,6 +2,7 @@
 
 namespace Siroko\Cart\Infrastructure\Persistence\Doctrine\Repository;
 
+use Doctrine\DBAL\ParameterType;
 use Doctrine\ORM\EntityManagerInterface;
 use Ramsey\Uuid\Uuid;
 use Siroko\Cart\Domain\Entity\Product;
@@ -35,6 +36,65 @@ class DoctrineProductRepository implements ProductRepository
     {
         $this->em->persist($product);
         $this->em->flush();
+    }
+
+    /**
+     * Un único UPDATE, para que dos borrados simultáneos del mismo producto no
+     * se pisen el incremento. `quantity` es una columna INT, así que la suma se
+     * hace en la base de datos; el id va con su tipo registrado para que se
+     * convierta a los 16 bytes con los que está guardado.
+     *
+     * Se salta la entidad a propósito: un incremento atómico no puede pasar por
+     * el objeto en memoria. No pone en riesgo la invariante de `Quantity`, que
+     * es no ser negativa, porque esto sólo suma.
+     */
+    public function returnStock(ProductId $id, int $units): void
+    {
+        $this->guardUnits($units);
+
+        $this->em->getConnection()->executeStatement(
+            'UPDATE product SET quantity = quantity + :units WHERE id = :id',
+            ['units' => $units, 'id' => $id],
+            ['units' => ParameterType::INTEGER, 'id' => ProductIdType::NAME]
+        );
+    }
+
+    /**
+     * Un único UPDATE condicional: comprobar y restar son la misma operación,
+     * de modo que dos altas simultáneas no pueden pasar las dos la comprobación
+     * y vender de más. `rowCount()` distingue "reservado" de "no había stock".
+     */
+    public function reserveStock(ProductId $id, int $units): bool
+    {
+        $this->guardUnits($units);
+
+        $affected = $this->em->getConnection()->executeStatement(
+            'UPDATE product SET quantity = quantity - :units WHERE id = :id AND quantity >= :units',
+            ['units' => $units, 'id' => $id],
+            ['units' => ParameterType::INTEGER, 'id' => ProductIdType::NAME]
+        );
+
+        return $affected === 1;
+    }
+
+    /**
+     * Las dos operaciones de stock declaran `positive-int` y el SQL cuenta con
+     * ello. Con 0 unidades el UPDATE no cambia ninguna fila, y `rowCount()` a 0
+     * es indistinguible de "no había stock", así que una reserva de 0 se
+     * reportaba como falta de stock sobre un producto disponible. Con unidades
+     * negativas es peor: `quantity >= -5` se cumple siempre y la resta suma,
+     * de modo que una reserva inventaría stock y además diría que fue bien.
+     *
+     * Ninguno de los dos casos es una petición del cliente -las entradas se
+     * validan antes-, sino un error de programación, y como tal se señala.
+     */
+    private function guardUnits(int $units): void
+    {
+        if ($units < 1) {
+            throw new \InvalidArgumentException(
+                sprintf('Stock movements need at least one unit, got %d.', $units)
+            );
+        }
     }
 
     /**

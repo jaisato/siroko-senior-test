@@ -8,10 +8,14 @@ use Siroko\Cart\Domain\Entity\CartItem;
 use Siroko\Cart\Domain\Entity\Product;
 use Siroko\Cart\Domain\Repository\CartItemRepository;
 use Siroko\Cart\Domain\Repository\CartRepository;
+use Siroko\Cart\Domain\Exception\OutOfStockException;
 use Siroko\Cart\Domain\Repository\ProductRepository;
+use Siroko\Cart\Domain\Transaction\TransactionalSession;
 use Siroko\Cart\Domain\ValueObject\CartStatus;
+use Siroko\Cart\Domain\ValueObject\ProductId;
 use Siroko\Cart\Domain\ValueObject\Quantity;
 use Siroko\Cart\Infrastructure\Api\Dto\Cart\CartRead;
+use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
 class CreateCartCommandHandler
 {
@@ -24,6 +28,7 @@ class CreateCartCommandHandler
         private readonly CartRepository $cartRepository,
         private readonly CartItemRepository $cartItemRepository,
         private readonly ProductRepository $productRepository,
+        private readonly TransactionalSession $session,
     ) {
     }
 
@@ -39,28 +44,87 @@ class CreateCartCommandHandler
             new CartStatus(CartStatus::PENDING),
         );
 
-        foreach ($command->getItems() as $item) {
-            /** @var Product $product */
-            $product = $this->productRepository->ofId($item['productId']);
-            /** @var Quantity $quantity */
-            $quantity = $item['quantity'];
-            for ($i = 0; $i < $quantity->asInt(); $i++) {
-                $cart->addItem(
-                    new CartItem(
-                        $this->cartItemRepository->nextIdentity(),
-                        $product,
-                    )
-                );
+        // Igual que en AddCartProductCommandHandler: la reserva es un ajuste
+        // relativo y condicional, no un `setQuantity()` con un valor absoluto
+        // sacado de la lectura de arriba. Un valor absoluto borra cualquier
+        // devolución de stock que confirme otra petición entre la lectura y la
+        // escritura, y comprobar el stock aparte de restarlo deja que dos
+        // peticiones simultáneas pasen las dos la comprobación.
+        //
+        // Todo va en una transacción: reservar varios productos y guardar el
+        // carrito son una sola operación, y si falla a medias no puede quedar
+        // stock reservado sin carrito que lo justifique.
+        $this->session->executeAtomically(function () use ($cart, $command): void {
+            foreach ($this->inLockOrder($command->getItems()) as $item) {
+                /** @var Product|null $product */
+                $product = $this->productRepository->ofId($item['productId']);
+
+                // `ofId()` devuelve null para un id que no existe, y la
+                // anotación `@var Product` no lo impedía: la siguiente línea
+                // llamaba a `id()` sobre null y el cliente recibía un 500 por
+                // haber pedido un producto inexistente.
+                if ($product === null) {
+                    throw new NotFoundHttpException(
+                        sprintf('Product %s not found', $item['productId']->toString())
+                    );
+                }
+
+                /** @var Quantity $quantity */
+                $quantity = $item['quantity'];
+
+                if (!$this->productRepository->reserveStock($product->id(), $quantity->asInt())) {
+                    throw new OutOfStockException(
+                        sprintf('Product %s does not have %d units available', $product->id()->toString(), $quantity->asInt())
+                    );
+                }
+
+                for ($i = 0; $i < $quantity->asInt(); $i++) {
+                    $cart->addItem(
+                        new CartItem(
+                            $this->cartItemRepository->nextIdentity(),
+                            $product,
+                        )
+                    );
+                }
             }
 
-            $productQuantity = $product->quantity();
-            $newQuantity = $productQuantity->asInt() - $quantity->asInt();
-            $product->setQuantity(new Quantity($newQuantity));
-            $this->productRepository->save($product);
-        }
-
-        $this->cartRepository->save($cart);
+            $this->cartRepository->save($cart);
+        });
 
         return CartRead::fromModel($cart);
+    }
+
+    /**
+     * Ordena las líneas por id de producto, que es el orden en el que se toman
+     * los cerrojos de fila.
+     *
+     * Reservando en el orden en que llegan en la petición, dos altas de carrito
+     * con los mismos productos en orden contrario se interbloqueaban: cada
+     * transacción bloqueaba su primer producto y esperaba al que tenía la otra.
+     * MySQL aborta una de las dos, y el bus de escritura no reintenta, así que
+     * una petición perfectamente válida devolvía un 500.
+     *
+     * Que todas las transacciones recorran los productos en el mismo orden
+     * elimina el ciclo de espera: la que llega segunda espera a la primera y
+     * sigue. Cuál sea ese orden da igual mientras sea el mismo para todas; el
+     * id sirve y no depende de nada externo. Líneas repetidas del mismo
+     * producto quedan juntas, y volver a bloquear una fila que ya tiene esta
+     * misma transacción no cuesta nada.
+     *
+     * @param array<int, array{productId: ProductId, quantity: Quantity}> $items
+     *
+     * @return array<int, array{productId: ProductId, quantity: Quantity}>
+     */
+    private function inLockOrder(array $items): array
+    {
+        usort(
+            $items,
+            static fn (array $a, array $b): int => strcmp(
+                $a['productId']->toString(),
+                $b['productId']->toString()
+            )
+        );
+
+        return $items;
     }
 }

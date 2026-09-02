@@ -7,6 +7,7 @@ use Siroko\Cart\Domain\Exception\InvalidCartStatusException;
 use Siroko\Cart\Domain\Exception\InvalidProductCodeException;
 use Siroko\Cart\Domain\Exception\InvalidQuantityException;
 use Siroko\Cart\Domain\Exception\NameInvalidLengthException;
+use Siroko\Cart\Domain\Exception\OutOfStockException;
 use Siroko\Cart\Domain\Exception\PriceIsNotSameCurrencyException;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Response;
@@ -46,6 +47,7 @@ final class ApiExceptionMapper
         InvalidQuantityException::class        => Response::HTTP_BAD_REQUEST,
         InvalidProductCodeException::class     => Response::HTTP_BAD_REQUEST,
         NameInvalidLengthException::class      => Response::HTTP_BAD_REQUEST,
+        OutOfStockException::class             => Response::HTTP_CONFLICT,
         PriceIsNotSameCurrencyException::class => Response::HTTP_BAD_REQUEST,
     ];
 

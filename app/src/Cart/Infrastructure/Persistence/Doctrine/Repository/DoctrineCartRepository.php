@@ -2,6 +2,7 @@
 
 namespace Siroko\Cart\Infrastructure\Persistence\Doctrine\Repository;
 
+use Doctrine\DBAL\LockMode;
 use Doctrine\ORM\EntityManagerInterface;
 use Ramsey\Uuid\Uuid;
 use Siroko\Cart\Domain\Entity\Cart;
@@ -55,6 +56,20 @@ class DoctrineCartRepository implements CartRepository
             ->setParameter('id', $id, CartIdType::NAME);
 
         return $qb->getQuery()->getOneOrNullResult();
+    }
+
+    public function ofIdForUpdate(CartId $id): ?Cart
+    {
+        $qb = $this->em->createQueryBuilder();
+
+        $qb->select('c')
+            ->from(Cart::class, 'c')
+            ->where('c.id = :id')
+            ->setParameter('id', $id, CartIdType::NAME);
+
+        return $qb->getQuery()
+            ->setLockMode(LockMode::PESSIMISTIC_WRITE)
+            ->getOneOrNullResult();
     }
 
     /**
