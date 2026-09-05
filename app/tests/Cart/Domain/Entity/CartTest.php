@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace Siroko\Tests\Cart\Domain\Entity;
 
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Ramsey\Uuid\Uuid;
 use Siroko\Cart\Domain\Entity\Cart;
 use Siroko\Cart\Domain\Entity\CartItem;
 use Siroko\Cart\Domain\Entity\Product;
+use Siroko\Cart\Domain\Exception\EmptyCartException;
 use Siroko\Cart\Domain\Exception\InvalidCartStatusException;
 use Siroko\Cart\Domain\Exception\PriceIsNotSameCurrencyException;
 use Siroko\Cart\Domain\ValueObject\CartId;
@@ -89,6 +91,7 @@ final class CartTest extends TestCase
     public function test_paying_a_pending_cart_makes_it_paid(): void
     {
         $cart = self::cart();
+        $cart->addItem(self::item());
 
         $cart->pay();
 
@@ -99,11 +102,94 @@ final class CartTest extends TestCase
     public function test_paying_twice_is_refused(): void
     {
         $cart = self::cart();
+        $cart->addItem(self::item());
         $cart->pay();
 
         $this->expectException(InvalidCartStatusException::class);
 
         $cart->pay();
+    }
+
+    /** A payment for nothing is not a payment; checkout used to accept it. */
+    public function test_an_empty_cart_cannot_be_paid(): void
+    {
+        $cart = self::cart();
+
+        try {
+            $cart->pay();
+            self::fail('expected an exception');
+        } catch (EmptyCartException $e) {
+            self::assertStringContainsString('empty', $e->getMessage());
+        }
+
+        self::assertTrue($cart->isPending(), 'the refusal leaves the cart as it was');
+    }
+
+    public function test_a_paid_cart_can_be_delivered_and_then_nothing_else(): void
+    {
+        $cart = self::cart();
+        $cart->addItem(self::item());
+        $cart->pay();
+
+        $cart->deliver();
+
+        self::assertSame(CartStatus::DELIVERED, $cart->status()->toInt());
+
+        foreach (['deliver', 'cancel', 'pay'] as $transition) {
+            try {
+                $cart->{$transition}();
+                self::fail(\sprintf('%s() must be refused on a delivered cart', $transition));
+            } catch (InvalidCartStatusException) {
+            }
+        }
+
+        self::assertSame(CartStatus::DELIVERED, $cart->status()->toInt());
+    }
+
+    public function test_only_a_paid_cart_can_be_delivered(): void
+    {
+        $cart = self::cart();
+
+        $this->expectException(InvalidCartStatusException::class);
+        $this->expectExceptionMessage('not paid');
+
+        $cart->deliver();
+    }
+
+    #[DataProvider('cancellableStatuses')]
+    public function test_a_pending_or_paid_cart_can_be_canceled(int $status): void
+    {
+        $cart = new Cart(CartId::fromString(Uuid::uuid4()->toString()), new CartStatus($status));
+
+        $cart->cancel();
+
+        self::assertSame(CartStatus::CANCELED, $cart->status()->toInt());
+    }
+
+    /**
+     * @return iterable<string, array{int}>
+     */
+    public static function cancellableStatuses(): iterable
+    {
+        yield 'pending' => [CartStatus::PENDING];
+        yield 'paid' => [CartStatus::PAID];
+    }
+
+    public function test_a_canceled_cart_is_final(): void
+    {
+        $cart = self::cart();
+        $cart->addItem(self::item());
+        $cart->cancel();
+
+        foreach (['cancel', 'deliver', 'pay'] as $transition) {
+            try {
+                $cart->{$transition}();
+                self::fail(\sprintf('%s() must be refused on a canceled cart', $transition));
+            } catch (InvalidCartStatusException) {
+            }
+        }
+
+        self::assertCount(1, $cart->items(), 'the lines stay as a record of what was in it');
     }
 
     /**
@@ -113,6 +199,7 @@ final class CartTest extends TestCase
     public function test_a_paid_cart_accepts_no_new_items(): void
     {
         $cart = self::cart();
+        $cart->addItem(self::item());
         $cart->pay();
 
         $this->expectException(InvalidCartStatusException::class);
@@ -167,6 +254,7 @@ final class CartTest extends TestCase
     public function test_add_product_is_refused_on_a_paid_cart(): void
     {
         $cart = self::cart();
+        $cart->addItem(self::item());
         $cart->pay();
 
         $this->expectException(InvalidCartStatusException::class);

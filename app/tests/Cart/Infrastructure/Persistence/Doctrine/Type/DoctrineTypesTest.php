@@ -6,17 +6,23 @@ namespace Siroko\Tests\Cart\Infrastructure\Persistence\Doctrine\Type;
 
 use Doctrine\DBAL\ParameterType;
 use Doctrine\DBAL\Platforms\AbstractPlatform;
+use Doctrine\DBAL\Platforms\MySQL80Platform;
 use Doctrine\DBAL\Platforms\MySQLPlatform;
 use Doctrine\DBAL\Platforms\SqlitePlatform;
 use Doctrine\DBAL\Types\ConversionException;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Ramsey\Uuid\Uuid;
+use Siroko\Cart\Domain\Entity\CartItem;
+use Siroko\Cart\Domain\Entity\Product;
 use Siroko\Cart\Domain\ValueObject\CartId;
 use Siroko\Cart\Domain\ValueObject\CartStatus;
 use Siroko\Cart\Domain\ValueObject\Identifier;
 use Siroko\Cart\Domain\ValueObject\ItemId;
 use Siroko\Cart\Domain\ValueObject\Name;
+use Siroko\Cart\Domain\ValueObject\OrderId;
+use Siroko\Cart\Domain\ValueObject\OrderLine;
+use Siroko\Cart\Domain\ValueObject\Price;
 use Siroko\Cart\Domain\ValueObject\ProductCode;
 use Siroko\Cart\Domain\ValueObject\ProductId;
 use Siroko\Cart\Domain\ValueObject\Quantity;
@@ -24,13 +30,15 @@ use Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\AbstractUuidType;
 use Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\CartIdType;
 use Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\CartStatusType;
 use Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\ItemIdType;
+use Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\OrderIdType;
+use Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\OrderLinesType;
 use Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\ProductCodeType;
 use Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\ProductIdType;
 use Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\ProductNameType;
 use Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\QuantityType;
 
 /**
- * Round trips of the seven custom types, on both platforms the project runs on.
+ * Round trips of the custom types, on both platforms the project runs on.
  */
 final class DoctrineTypesTest extends TestCase
 {
@@ -42,6 +50,7 @@ final class DoctrineTypesTest extends TestCase
         yield 'cart_id' => [new CartIdType(), CartId::class];
         yield 'item_id' => [new ItemIdType(), ItemId::class];
         yield 'product_id' => [new ProductIdType(), ProductId::class];
+        yield 'order_id' => [new OrderIdType(), OrderId::class];
     }
 
     /**
@@ -219,12 +228,66 @@ final class DoctrineTypesTest extends TestCase
         (new ProductCodeType())->convertToDatabaseValue(new \stdClass(), new SqlitePlatform());
     }
 
+    #[DataProvider('jsonPlatforms')]
+    public function test_order_lines_round_trip_as_a_json_document(AbstractPlatform $platform, string $declaration): void
+    {
+        $type = new OrderLinesType();
+        $line = OrderLine::fromCartItem(new CartItem(
+            ItemId::fromString(Uuid::uuid4()->toString()),
+            new Product(ProductId::fromString(Uuid::uuid4()->toString()), ProductCode::fromString('K3'), Name::fromString('Gafas'), Price::of('129.95', 'EUR')),
+            new Quantity(2),
+        ));
+
+        self::assertSame($declaration, $type->getSQLDeclaration([], $platform));
+
+        $stored = $type->convertToDatabaseValue([$line], $platform);
+        self::assertIsString($stored);
+        self::assertSame([$line->toArray()], json_decode($stored, true));
+
+        $read = $type->convertToPHPValue($stored, $platform);
+        self::assertIsArray($read);
+        self::assertCount(1, $read);
+        self::assertSame($line->toArray(), $read[0]->toArray());
+        self::assertSame('259.90', $read[0]->lineTotal()->amount());
+
+        self::assertNull($type->convertToDatabaseValue(null, $platform));
+        self::assertNull($type->convertToPHPValue(null, $platform));
+        self::assertSame([], $type->convertToPHPValue('[]', $platform));
+    }
+
+    /**
+     * @return iterable<string, array{AbstractPlatform, string}>
+     */
+    public static function jsonPlatforms(): iterable
+    {
+        // DBAL 3's MySQLPlatform models 5.6, where JSON is LONGTEXT; the
+        // application connects with serverVersion=8.0.
+        yield 'mysql 8' => [new MySQL80Platform(), 'JSON'];
+        yield 'sqlite' => [new SqlitePlatform(), 'CLOB'];
+    }
+
+    public function test_order_lines_refuse_values_that_are_not_lines(): void
+    {
+        $this->expectException(ConversionException::class);
+
+        (new OrderLinesType())->convertToDatabaseValue([new \stdClass()], new SqlitePlatform());
+    }
+
+    public function test_order_lines_refuse_a_document_that_is_not_a_list_of_lines(): void
+    {
+        $this->expectException(ConversionException::class);
+
+        (new OrderLinesType())->convertToPHPValue('[{"productId": "x"}]', new SqlitePlatform());
+    }
+
     public function test_type_names_match_the_doctrine_registration(): void
     {
         self::assertSame('cart_id', (new CartIdType())->getName());
         self::assertSame('item_id', (new ItemIdType())->getName());
         self::assertSame('product_id', (new ProductIdType())->getName());
+        self::assertSame('order_id', (new OrderIdType())->getName());
         self::assertSame('cart_status', (new CartStatusType())->getName());
         self::assertSame('quantity', (new QuantityType())->getName());
+        self::assertSame('order_lines', (new OrderLinesType())->getName());
     }
 }

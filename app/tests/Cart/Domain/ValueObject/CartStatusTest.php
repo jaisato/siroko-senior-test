@@ -37,6 +37,20 @@ final class CartStatusTest extends TestCase
         self::assertSame(CartStatus::PENDING, CartStatus::pending()->toInt());
         self::assertFalse(CartStatus::paid()->isPending());
         self::assertSame(CartStatus::PAID, CartStatus::paid()->toInt());
+        self::assertSame(CartStatus::DELIVERED, CartStatus::delivered()->toInt());
+        self::assertSame(CartStatus::CANCELED, CartStatus::canceled()->toInt());
+    }
+
+    public function test_each_status_answers_to_its_own_predicate_only(): void
+    {
+        $predicates = ['isPending', 'isPaid', 'isDelivered', 'isCanceled'];
+        $statuses = [CartStatus::pending(), CartStatus::paid(), CartStatus::delivered(), CartStatus::canceled()];
+
+        foreach ($statuses as $i => $status) {
+            foreach ($predicates as $j => $predicate) {
+                self::assertSame($i === $j, $status->{$predicate}(), \sprintf('%s()->%s()', $status, $predicate));
+            }
+        }
     }
 
     public function test_equality(): void
