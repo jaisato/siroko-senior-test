@@ -39,6 +39,17 @@ services:
     Siroko\Cart\Infrastructure\Console\:
         resource: '../../../src/Cart/Infrastructure/Console'
 
+    # Optional API-token authentication. Off while API_TOKENS is empty.
+    Siroko\Cart\Infrastructure\Api\Security\ApiTokens:
+        factory: ['Siroko\Cart\Infrastructure\Api\Security\ApiTokens', 'fromSpec']
+        arguments: ['%env(API_TOKENS)%']
+
+    Siroko\Cart\Infrastructure\Api\Security\ApiTokenAuthenticator:
+        arguments:
+            $apiPrefix: '%api_route_prefix%'
+
+    Siroko\Cart\Infrastructure\Api\Security\CurrentCustomer: ~
+
     # Maps an exception onto the API's error response. Registered next to the
     # controllers that inject it; there is no broad App\ glob in this project,
     # so a class under src/ is not a service until it is named here.

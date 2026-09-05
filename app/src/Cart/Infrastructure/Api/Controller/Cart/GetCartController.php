@@ -7,6 +7,7 @@ namespace Siroko\Cart\Infrastructure\Api\Controller\Cart;
 use Siroko\Cart\Application\Query\Cart\GetCartByIdQuery;
 use Siroko\Cart\Domain\CommandBus\CommandBusRead;
 use Siroko\Cart\Infrastructure\Api\ApiExceptionMapper;
+use Siroko\Cart\Infrastructure\Api\Security\CurrentCustomer;
 use Symfony\Component\HttpFoundation\JsonResponse;
 
 /**
@@ -17,6 +18,7 @@ final class GetCartController
     public function __construct(
         private readonly CommandBusRead $commandBus,
         private readonly ApiExceptionMapper $errors,
+        private readonly CurrentCustomer $customer,
     ) {}
 
     public function __invoke(string $id): JsonResponse
@@ -25,7 +27,7 @@ final class GetCartController
         // "cart not found" - and any other failure - surfaced as a generic 500.
         try {
             $cart = $this->commandBus->handle(
-                new GetCartByIdQuery($id),
+                new GetCartByIdQuery($id, $this->customer->idOrNull()),
             );
 
             return new JsonResponse($cart);

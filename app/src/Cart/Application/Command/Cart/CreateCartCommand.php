@@ -6,8 +6,10 @@ namespace Siroko\Cart\Application\Command\Cart;
 
 use Siroko\Cart\Domain\Entity\CartItem;
 use Siroko\Cart\Domain\Exception\InvalidCartLineException;
+use Siroko\Cart\Domain\Exception\InvalidCustomerIdException;
 use Siroko\Cart\Domain\Exception\InvalidIdentifierException;
 use Siroko\Cart\Domain\Exception\InvalidQuantityException;
+use Siroko\Cart\Domain\ValueObject\CustomerId;
 use Siroko\Cart\Domain\ValueObject\ProductId;
 use Siroko\Cart\Domain\ValueObject\Quantity;
 
@@ -37,15 +39,21 @@ final class CreateCartCommand
      */
     private array $items = [];
 
+    private readonly ?CustomerId $customerId;
+
     /**
-     * @param array<mixed> $products the decoded "products" list of the request
+     * @param array<mixed> $products   the decoded "products" list of the request
+     * @param string|null  $customerId the authenticated caller, who will own the cart
      *
      * @throws InvalidCartLineException   when a line does not have the expected shape
      * @throws InvalidQuantityException   when a quantity is not one a cart line accepts
      * @throws InvalidIdentifierException when a product id is not a UUID
+     * @throws InvalidCustomerIdException
      */
-    public function __construct(array $products)
+    public function __construct(array $products, ?string $customerId = null)
     {
+        $this->customerId = null === $customerId ? null : CustomerId::fromString($customerId);
+
         if (\count($products) > self::MAX_LINES) {
             throw InvalidCartLineException::tooManyLines(self::MAX_LINES);
         }
@@ -114,5 +122,13 @@ final class CreateCartCommand
     public function getItems(): array
     {
         return $this->items;
+    }
+
+    /**
+     * The authenticated caller, when the API authenticates; null otherwise.
+     */
+    public function customer(): ?CustomerId
+    {
+        return $this->customerId;
     }
 }

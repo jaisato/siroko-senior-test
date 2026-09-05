@@ -7,6 +7,7 @@ namespace Siroko\Cart\Infrastructure\Api\Controller\Cart;
 use Siroko\Cart\Application\Command\Cart\CancelCartCommand;
 use Siroko\Cart\Domain\CommandBus\CommandBusWrite;
 use Siroko\Cart\Infrastructure\Api\ApiExceptionMapper;
+use Siroko\Cart\Infrastructure\Api\Security\CurrentCustomer;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -21,13 +22,14 @@ final class CancelCartController
     public function __construct(
         private readonly CommandBusWrite $commandBus,
         private readonly ApiExceptionMapper $errors,
+        private readonly CurrentCustomer $customer,
     ) {}
 
     public function __invoke(string $id): Response
     {
         try {
             $this->commandBus->handle(
-                new CancelCartCommand($id),
+                new CancelCartCommand($id, $this->customer->idOrNull()),
             );
         } catch (\Throwable $e) {
             return $this->errors->toResponse($e);

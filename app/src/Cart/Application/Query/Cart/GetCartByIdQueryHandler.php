@@ -30,6 +30,8 @@ final class GetCartByIdQueryHandler
             throw CartNotFoundException::withId($query->cartId());
         }
 
+        $cart->ensureAccessibleBy($query->customer());
+
         return CartRead::fromModel($cart);
     }
 }

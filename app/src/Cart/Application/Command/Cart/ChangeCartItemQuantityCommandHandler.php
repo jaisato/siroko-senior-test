@@ -56,6 +56,7 @@ final class ChangeCartItemQuantityCommandHandler
                 throw CartNotFoundException::withId($command->cartId());
             }
 
+            $cart->ensureAccessibleBy($command->customer());
             $cart->ensurePending();
 
             $item = $this->cartItemRepository->ofIdForUpdate($command->itemId());

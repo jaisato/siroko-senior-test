@@ -12,6 +12,7 @@ use Siroko\Cart\Domain\Exception\DuplicateProductCodeException;
 use Siroko\Cart\Domain\Exception\EmptyCartException;
 use Siroko\Cart\Domain\Exception\InvalidCartLineException;
 use Siroko\Cart\Domain\Exception\InvalidCartStatusException;
+use Siroko\Cart\Domain\Exception\InvalidCustomerIdException;
 use Siroko\Cart\Domain\Exception\InvalidIdentifierException;
 use Siroko\Cart\Domain\Exception\InvalidPriceException;
 use Siroko\Cart\Domain\Exception\InvalidProductCodeException;
@@ -77,6 +78,7 @@ final class ApiExceptionMapper
         // already holds, which is the cart's state, hence a conflict.
         PriceIsNotSameCurrencyException::class => Response::HTTP_CONFLICT,
         InvalidCartLineException::class => Response::HTTP_BAD_REQUEST,
+        InvalidCustomerIdException::class => Response::HTTP_BAD_REQUEST,
         InvalidProductCriteriaException::class => Response::HTTP_BAD_REQUEST,
         InvalidProductUpdateException::class => Response::HTTP_BAD_REQUEST,
         InvalidStockAdjustmentException::class => Response::HTTP_BAD_REQUEST,

@@ -4,23 +4,37 @@ declare(strict_types=1);
 
 namespace Siroko\Cart\Application\Command\Cart;
 
+use Siroko\Cart\Domain\Exception\InvalidCustomerIdException;
 use Siroko\Cart\Domain\Exception\InvalidIdentifierException;
 use Siroko\Cart\Domain\ValueObject\CartId;
+use Siroko\Cart\Domain\ValueObject\CustomerId;
 
 final class DeliverCartCommand
 {
     private readonly CartId $cartId;
 
+    private readonly ?CustomerId $customerId;
+
     /**
      * @throws InvalidIdentifierException
+     * @throws InvalidCustomerIdException
      */
-    public function __construct(string $cartId)
+    public function __construct(string $cartId, ?string $customerId = null)
     {
         $this->cartId = CartId::fromString($cartId);
+        $this->customerId = null === $customerId ? null : CustomerId::fromString($customerId);
     }
 
     public function cartId(): CartId
     {
         return $this->cartId;
+    }
+
+    /**
+     * The authenticated caller, when the API authenticates; null otherwise.
+     */
+    public function customer(): ?CustomerId
+    {
+        return $this->customerId;
     }
 }

@@ -5,9 +5,11 @@ declare(strict_types=1);
 namespace Siroko\Cart\Application\Command\Cart;
 
 use Siroko\Cart\Domain\Entity\CartItem;
+use Siroko\Cart\Domain\Exception\InvalidCustomerIdException;
 use Siroko\Cart\Domain\Exception\InvalidIdentifierException;
 use Siroko\Cart\Domain\Exception\InvalidQuantityException;
 use Siroko\Cart\Domain\ValueObject\CartId;
+use Siroko\Cart\Domain\ValueObject\CustomerId;
 use Siroko\Cart\Domain\ValueObject\ProductId;
 use Siroko\Cart\Domain\ValueObject\Quantity;
 
@@ -19,18 +21,22 @@ final class AddCartProductCommand
 
     private readonly Quantity $quantity;
 
+    private readonly ?CustomerId $customerId;
+
     /**
      * `$quantity` is how many units to add to the line; it defaults to one so
      * the bodyless PUT the API has always offered keeps its meaning.
      *
      * @throws InvalidIdentifierException
      * @throws InvalidQuantityException   when the quantity is not one a cart line accepts
+     * @throws InvalidCustomerIdException
      */
-    public function __construct(string $cartId, string $productId, int|string $quantity = CartItem::MIN_QUANTITY)
+    public function __construct(string $cartId, string $productId, int|string $quantity = CartItem::MIN_QUANTITY, ?string $customerId = null)
     {
         $this->cartId = CartId::fromString($cartId);
         $this->productId = ProductId::fromString($productId);
         $this->quantity = self::lineQuantity($quantity);
+        $this->customerId = null === $customerId ? null : CustomerId::fromString($customerId);
     }
 
     public function cartId(): CartId
@@ -85,5 +91,13 @@ final class AddCartProductCommand
         }
 
         return $units;
+    }
+
+    /**
+     * The authenticated caller, when the API authenticates; null otherwise.
+     */
+    public function customer(): ?CustomerId
+    {
+        return $this->customerId;
     }
 }

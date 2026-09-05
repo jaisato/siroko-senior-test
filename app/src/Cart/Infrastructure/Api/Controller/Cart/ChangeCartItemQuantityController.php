@@ -7,6 +7,7 @@ namespace Siroko\Cart\Infrastructure\Api\Controller\Cart;
 use Siroko\Cart\Application\Command\Cart\ChangeCartItemQuantityCommand;
 use Siroko\Cart\Domain\CommandBus\CommandBusWrite;
 use Siroko\Cart\Infrastructure\Api\ApiExceptionMapper;
+use Siroko\Cart\Infrastructure\Api\Security\CurrentCustomer;
 use Siroko\Cart\Infrastructure\Api\JsonRequest;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
@@ -23,6 +24,7 @@ final class ChangeCartItemQuantityController
     public function __construct(
         private readonly CommandBusWrite $commandBus,
         private readonly ApiExceptionMapper $errors,
+        private readonly CurrentCustomer $customer,
     ) {}
 
     public function __invoke(string $cartId, string $itemId, Request $request): JsonResponse
@@ -31,7 +33,7 @@ final class ChangeCartItemQuantityController
             $body = JsonRequest::toArray($request);
 
             $cart = $this->commandBus->handle(
-                new ChangeCartItemQuantityCommand($cartId, $itemId, JsonRequest::requireInt($body, 'quantity')),
+                new ChangeCartItemQuantityCommand($cartId, $itemId, JsonRequest::requireInt($body, 'quantity'), $this->customer->idOrNull()),
             );
 
             return new JsonResponse($cart);

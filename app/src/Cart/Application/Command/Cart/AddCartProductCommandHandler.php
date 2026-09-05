@@ -59,6 +59,8 @@ final class AddCartProductCommandHandler
                 throw CartNotFoundException::withId($command->cartId());
             }
 
+            $cart->ensureAccessibleBy($command->customer());
+
             // Checked under the row lock, before any stock moves. Adding to a
             // paid cart reserved a unit that nothing could ever release - the
             // removal path refuses to return stock for a cart that is not

@@ -25,6 +25,7 @@ doctrine:
             cart_status: Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\CartStatusType
             order_id: Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\OrderIdType
             order_lines: Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\OrderLinesType
+            customer_id: Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\CustomerIdType
     orm:
         auto_generate_proxy_classes: true
         enable_lazy_ghost_objects: true

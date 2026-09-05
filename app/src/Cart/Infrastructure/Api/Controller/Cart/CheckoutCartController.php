@@ -7,6 +7,7 @@ namespace Siroko\Cart\Infrastructure\Api\Controller\Cart;
 use Siroko\Cart\Application\Command\Cart\CheckoutCartCommand;
 use Siroko\Cart\Domain\CommandBus\CommandBusWrite;
 use Siroko\Cart\Infrastructure\Api\ApiExceptionMapper;
+use Siroko\Cart\Infrastructure\Api\Security\CurrentCustomer;
 use Symfony\Component\HttpFoundation\JsonResponse;
 
 /**
@@ -21,13 +22,14 @@ final class CheckoutCartController
     public function __construct(
         private readonly CommandBusWrite $commandBus,
         private readonly ApiExceptionMapper $errors,
+        private readonly CurrentCustomer $customer,
     ) {}
 
     public function __invoke(string $id): JsonResponse
     {
         try {
             $cart = $this->commandBus->handle(
-                new CheckoutCartCommand($id),
+                new CheckoutCartCommand($id, $this->customer->idOrNull()),
             );
 
             return new JsonResponse($cart);

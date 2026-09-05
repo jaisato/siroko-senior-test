@@ -17,6 +17,7 @@ use Siroko\Cart\Domain\Entity\CartItem;
 use Siroko\Cart\Domain\Entity\Product;
 use Siroko\Cart\Domain\ValueObject\CartId;
 use Siroko\Cart\Domain\ValueObject\CartStatus;
+use Siroko\Cart\Domain\ValueObject\CustomerId;
 use Siroko\Cart\Domain\ValueObject\Identifier;
 use Siroko\Cart\Domain\ValueObject\ItemId;
 use Siroko\Cart\Domain\ValueObject\Name;
@@ -29,6 +30,7 @@ use Siroko\Cart\Domain\ValueObject\Quantity;
 use Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\AbstractUuidType;
 use Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\CartIdType;
 use Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\CartStatusType;
+use Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\CustomerIdType;
 use Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\ItemIdType;
 use Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\OrderIdType;
 use Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\OrderLinesType;
@@ -280,8 +282,25 @@ final class DoctrineTypesTest extends TestCase
         (new OrderLinesType())->convertToPHPValue('[{"productId": "x"}]', new SqlitePlatform());
     }
 
+    public function test_customer_id_round_trips_as_a_varchar_of_its_max_length(): void
+    {
+        $type = new CustomerIdType();
+
+        self::assertSame('VARCHAR(64)', $type->getSQLDeclaration([], new MySQLPlatform()));
+        self::assertSame('customer_id', $type->getName());
+
+        $customer = CustomerId::fromString('alice@example.test');
+        self::assertSame('alice@example.test', $type->convertToDatabaseValue($customer, new SqlitePlatform()));
+
+        $read = $type->convertToPHPValue('alice@example.test', new SqlitePlatform());
+        self::assertInstanceOf(CustomerId::class, $read);
+        self::assertTrue($customer->equals($read));
+        self::assertNull($type->convertToPHPValue(null, new SqlitePlatform()));
+    }
+
     public function test_type_names_match_the_doctrine_registration(): void
     {
+        self::assertSame('customer_id', (new CustomerIdType())->getName());
         self::assertSame('cart_id', (new CartIdType())->getName());
         self::assertSame('item_id', (new ItemIdType())->getName());
         self::assertSame('product_id', (new ProductIdType())->getName());

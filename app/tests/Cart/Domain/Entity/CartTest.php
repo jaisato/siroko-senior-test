@@ -10,11 +10,13 @@ use Ramsey\Uuid\Uuid;
 use Siroko\Cart\Domain\Entity\Cart;
 use Siroko\Cart\Domain\Entity\CartItem;
 use Siroko\Cart\Domain\Entity\Product;
+use Siroko\Cart\Domain\Exception\CartNotFoundException;
 use Siroko\Cart\Domain\Exception\EmptyCartException;
 use Siroko\Cart\Domain\Exception\InvalidCartStatusException;
 use Siroko\Cart\Domain\Exception\PriceIsNotSameCurrencyException;
 use Siroko\Cart\Domain\ValueObject\CartId;
 use Siroko\Cart\Domain\ValueObject\CartStatus;
+use Siroko\Cart\Domain\ValueObject\CustomerId;
 use Siroko\Cart\Domain\ValueObject\ItemId;
 use Siroko\Cart\Domain\ValueObject\Name;
 use Siroko\Cart\Domain\ValueObject\Price;
@@ -383,6 +385,44 @@ final class CartTest extends TestCase
         self::assertEqualsWithDelta(time(), $cart->createdAt()->getTimestamp(), 5);
         self::assertNull($cart->expiresAt());
         self::assertFalse($cart->isExpiredAt(new \DateTimeImmutable('+1 year')), 'no deadline, no expiry');
+    }
+
+    public function test_a_cart_may_be_opened_for_a_customer(): void
+    {
+        $alice = CustomerId::fromString('alice');
+        $now = new \DateTimeImmutable('2026-09-06 10:00:00', new \DateTimeZone('UTC'));
+
+        $owned = Cart::open(CartId::fromString(Uuid::uuid4()->toString()), $now, new \DateInterval('PT30M'), $alice);
+        $ownerless = Cart::open(CartId::fromString(Uuid::uuid4()->toString()), $now, new \DateInterval('PT30M'));
+
+        self::assertSame($alice, $owned->customerId());
+        self::assertNull($ownerless->customerId());
+        self::assertNull(self::cart()->customerId(), 'a cart built directly belongs to nobody');
+    }
+
+    /**
+     * No caller (authentication off) sees everything; an owner's cart is the
+     * owner's alone; an ownerless cart is open to any caller.
+     */
+    public function test_who_may_access_a_cart(): void
+    {
+        $alice = CustomerId::fromString('alice');
+        $bob = CustomerId::fromString('bob');
+        $now = new \DateTimeImmutable('2026-09-06 10:00:00', new \DateTimeZone('UTC'));
+        $alices = Cart::open(CartId::fromString(Uuid::uuid4()->toString()), $now, new \DateInterval('PT30M'), $alice);
+        $ownerless = self::cart();
+
+        self::assertTrue($alices->isAccessibleBy(null));
+        self::assertTrue($alices->isAccessibleBy(CustomerId::fromString('alice')), 'compared by value');
+        self::assertFalse($alices->isAccessibleBy($bob));
+        self::assertTrue($ownerless->isAccessibleBy(null));
+        self::assertTrue($ownerless->isAccessibleBy($bob));
+
+        $alices->ensureAccessibleBy($alice);
+
+        $this->expectException(CartNotFoundException::class);
+
+        $alices->ensureAccessibleBy($bob);
     }
 
     public function test_ensure_pending_names_the_conflict(): void

@@ -35,6 +35,7 @@ final class CancelCartCommandHandler
                 throw CartNotFoundException::withId($command->cartId());
             }
 
+            $cart->ensureAccessibleBy($command->customer());
             $this->cancellation->cancel($cart);
         });
     }

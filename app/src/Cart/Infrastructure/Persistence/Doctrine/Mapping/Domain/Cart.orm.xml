@@ -14,6 +14,8 @@
         <!-- The sweep that releases expired reservations reads by (status, expires_at). -->
         <indexes>
             <index name="idx_cart_status_expires" columns="status,expires_at"/>
+            <!-- GET /v1/carts lists a customer's carts newest first. -->
+            <index name="idx_cart_customer_created" columns="customer_id,created_at"/>
         </indexes>
 
         <!-- Fields -->
@@ -27,6 +29,9 @@
 
         <!-- Set while pending; a paid or canceled cart reserves nothing. -->
         <field name="expiresAt" column="expires_at" type="datetime_immutable" nullable="true"/>
+
+        <!-- Null for a cart opened while the API ran without authentication. -->
+        <field name="customerId" column="customer_id" type="customer_id" length="64" nullable="true"/>
 
         <one-to-many field="items"
                      target-entity="Siroko\Cart\Domain\Entity\CartItem"

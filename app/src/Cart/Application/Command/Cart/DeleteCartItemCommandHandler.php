@@ -66,6 +66,8 @@ final class DeleteCartItemCommandHandler
                 throw CartNotFoundException::withId($command->cartId());
             }
 
+            $cart->ensureAccessibleBy($command->customer());
+
             // El estado se lee del carrito bloqueado, no del que cuelga de la
             // línea: bloquear sólo la línea no serializa nada frente al
             // checkout, que ni siquiera la mira. Los dos podían leer el carrito

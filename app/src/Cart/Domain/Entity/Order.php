@@ -6,7 +6,9 @@ namespace Siroko\Cart\Domain\Entity;
 
 use Siroko\Cart\Domain\Exception\EmptyCartException;
 use Siroko\Cart\Domain\Exception\InvalidCartStatusException;
+use Siroko\Cart\Domain\Exception\OrderNotFoundException;
 use Siroko\Cart\Domain\ValueObject\CartId;
+use Siroko\Cart\Domain\ValueObject\CustomerId;
 use Siroko\Cart\Domain\ValueObject\OrderId;
 use Siroko\Cart\Domain\ValueObject\OrderLine;
 use Siroko\Cart\Domain\ValueObject\Price;
@@ -33,6 +35,7 @@ class Order
     private function __construct(
         private OrderId $id,
         private CartId $cartId,
+        private ?CustomerId $customerId,
         private array $lines,
         private int $itemCount,
         private Price $total,
@@ -63,7 +66,7 @@ class Order
             $lines[] = OrderLine::fromCartItem($item);
         }
 
-        return new self($id, $cart->id(), $lines, $cart->itemCount(), $total, $now);
+        return new self($id, $cart->id(), $cart->customerId(), $lines, $cart->itemCount(), $total, $now);
     }
 
     public function id(): OrderId
@@ -74,6 +77,30 @@ class Order
     public function cartId(): CartId
     {
         return $this->cartId;
+    }
+
+    public function customerId(): ?CustomerId
+    {
+        return $this->customerId;
+    }
+
+    /**
+     * The same rule as the cart it came from: an owner's order is theirs
+     * alone, an ownerless one is open, and no caller means no scoping.
+     */
+    public function isAccessibleBy(?CustomerId $caller): bool
+    {
+        return null === $caller || null === $this->customerId || $this->customerId->equals($caller);
+    }
+
+    /**
+     * @throws OrderNotFoundException so that another customer's order id is not confirmed to exist
+     */
+    public function ensureAccessibleBy(?CustomerId $caller): void
+    {
+        if (!$this->isAccessibleBy($caller)) {
+            throw OrderNotFoundException::withId($this->id);
+        }
     }
 
     /**

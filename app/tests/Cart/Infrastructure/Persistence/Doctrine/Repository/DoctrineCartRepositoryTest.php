@@ -13,6 +13,7 @@ use Siroko\Cart\Domain\Entity\Product;
 use Siroko\Cart\Domain\Repository\CartRepository;
 use Siroko\Cart\Domain\ValueObject\CartId;
 use Siroko\Cart\Domain\ValueObject\CartStatus;
+use Siroko\Cart\Domain\ValueObject\CustomerId;
 use Siroko\Cart\Domain\ValueObject\ItemId;
 use Siroko\Cart\Domain\ValueObject\Name;
 use Siroko\Cart\Domain\ValueObject\Price;
@@ -130,6 +131,47 @@ final class DoctrineCartRepositoryTest extends KernelTestCase
         self::assertSame([$lapsedEarlier->id()->toString(), $lapsedLater->id()->toString(), $onTheDot->id()->toString()], $ids);
         self::assertCount(2, $this->repository->expiredPendingIds($now, 2), 'the batch size caps the list');
         self::assertSame([], $this->repository->expiredPendingIds($now->modify('-2 hours'), 10));
+    }
+
+    public function test_the_owner_round_trips(): void
+    {
+        $cart = Cart::open($this->repository->nextIdentity(), new \DateTimeImmutable(), new \DateInterval('PT30M'), CustomerId::fromString('alice'));
+        $this->repository->save($cart);
+
+        $this->em->clear();
+
+        self::assertSame('alice', $this->repository->ofId($cart->id())?->customerId()?->toString());
+    }
+
+    /** GET /v1/carts: a customer's carts newest first, or every cart; optionally one status. */
+    public function test_search_lists_by_owner_and_status_newest_first(): void
+    {
+        $now = new \DateTimeImmutable('2026-09-06 10:00:00', new \DateTimeZone('UTC'));
+        $alice = CustomerId::fromString('alice');
+        $product = $this->product();
+
+        $old = new Cart($this->repository->nextIdentity(), CartStatus::pending(), $now->modify('-2 hours'), null, $alice);
+        $recent = new Cart($this->repository->nextIdentity(), CartStatus::pending(), $now->modify('-1 hour'), null, $alice);
+        $paid = new Cart($this->repository->nextIdentity(), CartStatus::pending(), $now, null, $alice);
+        $paid->addProduct(ItemId::fromString(Uuid::uuid4()->toString()), $product, new Quantity(1));
+        $paid->pay();
+        $bobs = new Cart($this->repository->nextIdentity(), CartStatus::pending(), $now, null, CustomerId::fromString('bob'));
+        $ownerless = new Cart($this->repository->nextIdentity(), CartStatus::pending(), $now);
+
+        foreach ([$old, $recent, $paid, $bobs, $ownerless] as $cart) {
+            $this->repository->save($cart);
+        }
+
+        $ids = static fn(array $carts): array => array_map(static fn(Cart $cart): string => $cart->id()->toString(), $carts);
+
+        self::assertSame([$paid->id()->toString(), $recent->id()->toString(), $old->id()->toString()], $ids($this->repository->search($alice, null, 1, 10)));
+        self::assertSame(3, $this->repository->countMatching($alice, null));
+        self::assertSame([$recent->id()->toString(), $old->id()->toString()], $ids($this->repository->search($alice, CartStatus::pending(), 1, 10)));
+        self::assertSame([$paid->id()->toString()], $ids($this->repository->search($alice, CartStatus::paid(), 1, 10)));
+        self::assertSame([$old->id()->toString()], $ids($this->repository->search($alice, null, 3, 1)), 'pages follow the order');
+        self::assertSame(5, $this->repository->countMatching(null, null), 'no owner: every cart');
+        self::assertCount(5, $this->repository->search(null, null, 1, 10));
+        self::assertSame(0, $this->repository->countMatching(CustomerId::fromString('carol'), null));
     }
 
     public function test_an_unknown_cart_is_null(): void

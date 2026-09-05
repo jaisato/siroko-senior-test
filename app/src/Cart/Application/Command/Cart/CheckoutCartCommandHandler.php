@@ -56,6 +56,8 @@ final class CheckoutCartCommandHandler
                 throw CartNotFoundException::withId($command->cartId());
             }
 
+            $cart->ensureAccessibleBy($command->customer());
+
             // The entity refuses to be paid twice, and to be paid for nothing;
             // the mapper turns both refusals into a 409.
             $cart->pay();
