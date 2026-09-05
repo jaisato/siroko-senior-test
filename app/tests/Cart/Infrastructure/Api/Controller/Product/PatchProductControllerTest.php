@@ -22,17 +22,17 @@ final class PatchProductControllerTest extends ApiTestCase
         ]);
 
         self::assertResponseStatusCodeSame(200);
+        $updated = $this->json();
         self::assertSame([
             'id' => $product->id()->toString(),
             'name' => 'Gafas Siroko K3',
             'code' => 'K3',
             'price' => "99,00\u{a0}€",
             'quantity' => 12,
-        ], $this->json());
+        ], $updated);
 
         $this->request('GET', $this->url('api_get_product_by_id', ['id' => $product->id()->toString()]));
-        $reloaded = $this->json();
-        self::assertSame(['Gafas Siroko K3', "99,00\u{a0}€"], [$reloaded['name'], $reloaded['price']], 'the change was persisted');
+        self::assertSame($updated, $this->json(), 'what was updated is what is read back');
     }
 
     public function test_the_code_can_change_to_a_free_one(): void
