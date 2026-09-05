@@ -180,6 +180,30 @@ abstract class ApiTestCase extends WebTestCase
     }
 
     /**
+     * A cart whose lines hold several units each: `[[$product, 3], [$other, 1]]`.
+     * Like persistCart(), the products' stock is left alone.
+     *
+     * @param list<array{0: Product, 1: int}> $lines
+     */
+    protected function persistCartWithLines(int $status, array $lines): Cart
+    {
+        $cart = new Cart(CartId::fromString(Uuid::uuid4()->toString()), CartStatus::pending());
+
+        foreach ($lines as [$product, $units]) {
+            $cart->addItem(new CartItem(ItemId::fromString(Uuid::uuid4()->toString()), $product, new Quantity($units)));
+        }
+
+        if (CartStatus::PAID === $status) {
+            $cart->pay();
+        }
+
+        $this->em()->persist($cart);
+        $this->em()->flush();
+
+        return $cart;
+    }
+
+    /**
      * Reads a product's stock straight from the database, bypassing the
      * identity map, which is the only way to see what a request really wrote.
      */

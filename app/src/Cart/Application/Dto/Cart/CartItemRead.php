@@ -11,9 +11,11 @@ final class CartItemRead
 {
     public function __construct(
         public readonly string $id,
+        public readonly string $productId,
         public readonly string $name,
         public readonly string $code,
         public readonly string $price,
+        public readonly int $quantity,
     ) {}
 
     public static function fromModel(CartItem $item): self
@@ -22,9 +24,11 @@ final class CartItemRead
 
         return new self(
             id: $item->id()->toString(),
+            productId: $product->id()->toString(),
             name: $product->name()->toString(),
             code: $product->code()->toString(),
             price: PriceFormatter::format($product->price()),
+            quantity: $item->quantity()->asInt(),
         );
     }
 }

@@ -33,6 +33,22 @@ final class DeleteCartItemControllerTest extends ApiTestCase
         self::assertCount(1, $this->reloadCart($cart)->items());
     }
 
+    public function test_removing_a_line_of_several_units_returns_all_of_them(): void
+    {
+        $product = $this->persistProduct(stock: 4);
+        $cart = $this->persistCartWithLines(CartStatus::PENDING, [[$product, 3]]);
+        $item = $this->firstItem($cart);
+
+        $this->request('DELETE', $this->url('api_delete_cart_item_by_id', [
+            'cartId' => $cart->id()->toString(),
+            'itemId' => $item->id()->toString(),
+        ]));
+
+        self::assertResponseStatusCodeSame(204);
+        self::assertSame(7, $this->stockOf($product), 'three units went back');
+        self::assertCount(0, $this->reloadCart($cart)->items());
+    }
+
     public function test_the_route_names_the_items_sub_collection(): void
     {
         $url = $this->url('api_delete_cart_item_by_id', ['cartId' => Uuid::uuid4()->toString(), 'itemId' => Uuid::uuid4()->toString()]);

@@ -7,8 +7,10 @@ api_platform:
         paths:
             # Routing + OpenAPI metadata only; the read models live in Application.
             - '%kernel.project_dir%/src/Cart/Infrastructure/Api/Resource'
+    # The PATCH endpoints read their own body (plain JSON), like every other
+    # write; without this entry API Platform answered 415 to `application/json`.
     patch_formats:
-        json: [ 'application/merge-patch+json' ]
+        json: [ 'application/merge-patch+json', 'application/json' ]
     formats:
         json: [ 'application/json' ]
         html: [ 'text/html' ]

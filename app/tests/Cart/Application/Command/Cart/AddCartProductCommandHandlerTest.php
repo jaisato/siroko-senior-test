@@ -4,15 +4,18 @@ declare(strict_types=1);
 
 namespace Siroko\Tests\Cart\Application\Command\Cart;
 
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Ramsey\Uuid\Uuid;
 use Siroko\Cart\Application\Command\Cart\AddCartProductCommand;
 use Siroko\Cart\Application\Command\Cart\AddCartProductCommandHandler;
 use Siroko\Cart\Domain\Entity\Cart;
+use Siroko\Cart\Domain\Entity\CartItem;
 use Siroko\Cart\Domain\Entity\Product;
 use Siroko\Cart\Domain\Exception\CartNotFoundException;
 use Siroko\Cart\Domain\Exception\InvalidCartStatusException;
 use Siroko\Cart\Domain\Exception\InvalidIdentifierException;
+use Siroko\Cart\Domain\Exception\InvalidQuantityException;
 use Siroko\Cart\Domain\Exception\OutOfStockException;
 use Siroko\Cart\Domain\Exception\ProductNotFoundException;
 use Siroko\Cart\Domain\Repository\CartItemRepository;
@@ -189,6 +192,83 @@ final class AddCartProductCommandHandlerTest extends TestCase
         $this->expectException(InvalidIdentifierException::class);
 
         new AddCartProductCommand('not-a-uuid', Uuid::uuid4()->toString());
+    }
+
+    /** Several units in one request are one reservation, not several rows. */
+    public function test_several_units_are_reserved_at_once_on_a_single_line(): void
+    {
+        $reserved = [];
+        $product = $this->product(quantity: 10);
+
+        $handler = $this->handler($product, $reserved, available: true);
+
+        $read = $handler(new AddCartProductCommand($this->cartId(), $product->id()->toString(), 4));
+
+        self::assertSame([[$product->id()->toString(), 4]], $reserved);
+        self::assertCount(1, $this->cart->items());
+        self::assertSame(4, array_values($read->items)[0]->quantity);
+    }
+
+    /**
+     * A product the cart already holds grows its line. With one row per unit
+     * a client had to remove units one by one, each by its own id.
+     */
+    public function test_adding_a_product_already_in_the_cart_grows_its_line(): void
+    {
+        $reserved = [];
+        $product = $this->product(quantity: 10);
+
+        $handler = $this->handler($product, $reserved, available: true);
+        $existing = new CartItem(ItemId::fromString(Uuid::uuid4()->toString()), $product, new Quantity(2));
+        $this->cart->addItem($existing);
+
+        $read = $handler(new AddCartProductCommand($this->cartId(), $product->id()->toString(), 3));
+
+        self::assertCount(1, $this->cart->items(), 'no second line for the same product');
+        self::assertSame(5, $existing->quantity()->asInt());
+        self::assertSame([[$product->id()->toString(), 3]], $reserved, 'only the new units were reserved');
+        self::assertSame([$existing->id()->toString()], array_keys($read->items));
+    }
+
+    /** The per-line cap is a rule of the line; the request over it is a 400, and nothing is kept. */
+    public function test_a_line_cannot_grow_past_what_one_line_holds(): void
+    {
+        $reserved = [];
+        $product = $this->product(quantity: 500);
+
+        $handler = $this->handler($product, $reserved, available: true);
+        $this->cart->addItem(new CartItem(ItemId::fromString(Uuid::uuid4()->toString()), $product, new Quantity(CartItem::MAX_QUANTITY)));
+
+        $this->expectException(InvalidQuantityException::class);
+
+        $handler(new AddCartProductCommand($this->cartId(), $product->id()->toString(), 1));
+    }
+
+    #[DataProvider('quantitiesALineRefuses')]
+    public function test_the_command_refuses_quantities_a_line_cannot_hold(int|string $quantity): void
+    {
+        $this->expectException(InvalidQuantityException::class);
+
+        new AddCartProductCommand(Uuid::uuid4()->toString(), Uuid::uuid4()->toString(), $quantity);
+    }
+
+    /**
+     * @return iterable<string, array{int|string}>
+     */
+    public static function quantitiesALineRefuses(): iterable
+    {
+        yield 'zero' => [0];
+        yield 'negative' => [-1];
+        yield 'over the cap' => [CartItem::MAX_QUANTITY + 1];
+        yield 'not a number' => ['two'];
+    }
+
+    public function test_the_command_defaults_to_one_unit(): void
+    {
+        $command = new AddCartProductCommand(Uuid::uuid4()->toString(), Uuid::uuid4()->toString());
+
+        self::assertSame(1, $command->quantity()->asInt());
+        self::assertSame(3, (new AddCartProductCommand(Uuid::uuid4()->toString(), Uuid::uuid4()->toString(), '3'))->quantity()->asInt(), 'numeric strings are understood');
     }
 
     private function cartId(): string

@@ -62,6 +62,20 @@ final class DeleteCartItemCommandHandlerTest extends TestCase
         self::assertSame([[$product->id()->toString(), 1]], $this->returned);
     }
 
+    /** A line holds as many units as were reserved for it; all of them come back. */
+    public function test_removing_a_line_of_several_units_returns_every_unit(): void
+    {
+        $product = $this->product(quantity: 4);
+        $cart = $this->cart(CartStatus::PENDING);
+        $item = $this->itemIn($cart, $product, units: 3);
+
+        $handler = $this->handler($cart, $item);
+
+        $handler(new DeleteCartItemCommand($cart->id()->toString(), $item->id()->toString()));
+
+        self::assertSame([[$product->id()->toString(), 3]], $this->returned);
+    }
+
     /**
      * A delete aimed at a cart that does not own the item must not credit any
      * stock - otherwise a repeated or mistargeted request mints inventory,
@@ -256,9 +270,9 @@ final class DeleteCartItemCommandHandlerTest extends TestCase
         return new Cart(CartId::fromString(Uuid::uuid4()->toString()), new CartStatus($status));
     }
 
-    private function itemIn(Cart $cart, Product $product): CartItem
+    private function itemIn(Cart $cart, Product $product, int $units = 1): CartItem
     {
-        $item = new CartItem(ItemId::fromString(Uuid::uuid4()->toString()), $product);
+        $item = new CartItem(ItemId::fromString(Uuid::uuid4()->toString()), $product, new Quantity($units));
         // A paid cart refuses new lines, so the line is attached while pending
         // and the status is set afterwards, as it would have happened in life.
         if ($cart->isPending()) {

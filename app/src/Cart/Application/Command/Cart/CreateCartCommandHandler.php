@@ -6,7 +6,7 @@ namespace Siroko\Cart\Application\Command\Cart;
 
 use Siroko\Cart\Application\Dto\Cart\CartRead;
 use Siroko\Cart\Domain\Entity\Cart;
-use Siroko\Cart\Domain\Entity\CartItem;
+use Siroko\Cart\Domain\Exception\InvalidQuantityException;
 use Siroko\Cart\Domain\Exception\OutOfStockException;
 use Siroko\Cart\Domain\Exception\ProductNotFoundException;
 use Siroko\Cart\Domain\Repository\CartItemRepository;
@@ -29,6 +29,7 @@ final class CreateCartCommandHandler
     /**
      * @throws ProductNotFoundException
      * @throws OutOfStockException
+     * @throws InvalidQuantityException when the lines of one product add up to more than a line holds
      */
     public function __invoke(CreateCartCommand $command): CartRead
     {
@@ -71,14 +72,11 @@ final class CreateCartCommandHandler
                     throw new OutOfStockException(\sprintf('Product %s does not have %d units available', $product->id()->toString(), $units));
                 }
 
-                for ($i = 0; $i < $units; ++$i) {
-                    $cart->addItem(
-                        new CartItem(
-                            $this->cartItemRepository->nextIdentity(),
-                            $product,
-                        ),
-                    );
-                }
+                // One line per product, holding all its units. A request that
+                // names the same product twice folds into a single line; if the
+                // sum is more than a line holds, the domain refuses and the
+                // whole transaction - reservations included - rolls back.
+                $cart->addProduct($this->cartItemRepository->nextIdentity(), $product, $item['quantity']);
             }
 
             $this->cartRepository->save($cart);

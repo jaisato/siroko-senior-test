@@ -8,6 +8,7 @@ use ApiPlatform\Metadata as API;
 use ApiPlatform\OpenApi\Model;
 use Siroko\Cart\Application\Dto\Cart\CartRead;
 use Siroko\Cart\Infrastructure\Api\Controller\Cart\AddCartProductController;
+use Siroko\Cart\Infrastructure\Api\Controller\Cart\ChangeCartItemQuantityController;
 use Siroko\Cart\Infrastructure\Api\Controller\Cart\CheckoutCartController;
 use Siroko\Cart\Infrastructure\Api\Controller\Cart\DeleteCartItemController;
 use Siroko\Cart\Infrastructure\Api\Controller\Cart\GetCartController;
@@ -129,6 +130,53 @@ use Symfony\Component\Routing\Requirement\Requirement;
                 ],
             ),
         ),
+        new API\Patch(
+            name: 'api_change_cart_item_quantity',
+            uriTemplate: '/v1/carts/{cartId}/items/{itemId}',
+            requirements: ['cartId' => Requirement::UUID, 'itemId' => Requirement::UUID],
+            controller: ChangeCartItemQuantityController::class,
+            read: false,
+            write: false,
+            deserialize: false,
+            input: false,
+            output: CartRead::class,
+            openapi: new Model\Operation(
+                summary: 'Set the quantity of a cart line',
+                description: 'Sets the line to exactly `quantity` units, reserving or returning the difference in stock. A quantity of 0 removes the line. Answers the whole cart.',
+                parameters: [
+                    new Model\Parameter(
+                        name: 'cartId',
+                        in: 'path',
+                        required: true,
+                        description: 'Cart UUID',
+                        schema: ['type' => 'string', 'format' => 'uuid'],
+                    ),
+                    new Model\Parameter(
+                        name: 'itemId',
+                        in: 'path',
+                        required: true,
+                        description: 'Item UUID',
+                        schema: ['type' => 'string', 'format' => 'uuid'],
+                    ),
+                ],
+                requestBody: new Model\RequestBody(
+                    description: 'JSON payload',
+                    required: true,
+                    content: new \ArrayObject([
+                        'application/json' => [
+                            'schema' => [
+                                'type' => 'object',
+                                'required' => ['quantity'],
+                                'additionalProperties' => false,
+                                'properties' => [
+                                    'quantity' => ['type' => 'integer', 'minimum' => 0, 'maximum' => 100, 'description' => '0 removes the line'],
+                                ],
+                            ],
+                        ],
+                    ]),
+                ),
+            ),
+        ),
         new API\Put(
             name: 'api_cart_checkout_by_id',
             uriTemplate: '/v1/carts/{id}/checkout',
@@ -158,10 +206,11 @@ use Symfony\Component\Routing\Requirement\Requirement;
             controller: AddCartProductController::class,
             read: false,
             write: false,
+            deserialize: false,
             input: false,
             output: CartRead::class,
             openapi: new Model\Operation(
-                summary: 'Add product to cart by id',
+                summary: 'Add units of a product to a cart',
                 parameters: [
                     new Model\Parameter(
                         name: 'cartId',
@@ -178,6 +227,21 @@ use Symfony\Component\Routing\Requirement\Requirement;
                         schema: ['type' => 'string', 'format' => 'uuid'],
                     ),
                 ],
+                requestBody: new Model\RequestBody(
+                    description: 'Optional. Without a body one unit is added; the units land on the line the cart already has for the product, if any.',
+                    required: false,
+                    content: new \ArrayObject([
+                        'application/json' => [
+                            'schema' => [
+                                'type' => 'object',
+                                'additionalProperties' => false,
+                                'properties' => [
+                                    'quantity' => ['type' => 'integer', 'minimum' => 1, 'maximum' => 100, 'default' => 1],
+                                ],
+                            ],
+                        ],
+                    ]),
+                ),
             ),
         ),
     ],

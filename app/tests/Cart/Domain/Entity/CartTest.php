@@ -135,6 +135,72 @@ final class CartTest extends TestCase
         self::assertCount(1, $cart->items());
     }
 
+    /**
+     * A cart holds one line per product. Adding a product it already holds
+     * grows that line, so "add" means "one more unit", not "one more row".
+     */
+    public function test_add_product_grows_the_existing_line_of_the_product(): void
+    {
+        $cart = self::cart();
+        $product = self::product();
+
+        $first = $cart->addProduct(ItemId::fromString(Uuid::uuid4()->toString()), $product, new Quantity(2));
+        $second = $cart->addProduct(ItemId::fromString(Uuid::uuid4()->toString()), $product, new Quantity(3));
+
+        self::assertSame($first, $second, 'the same line is returned');
+        self::assertCount(1, $cart->items());
+        self::assertSame(5, $first->quantity()->asInt());
+        self::assertSame($cart, $first->getCart());
+    }
+
+    public function test_add_product_opens_a_line_per_distinct_product(): void
+    {
+        $cart = self::cart();
+
+        $cart->addProduct(ItemId::fromString(Uuid::uuid4()->toString()), self::product(), new Quantity(1));
+        $cart->addProduct(ItemId::fromString(Uuid::uuid4()->toString()), self::product(), new Quantity(1));
+
+        self::assertCount(2, $cart->items());
+    }
+
+    public function test_add_product_is_refused_on_a_paid_cart(): void
+    {
+        $cart = self::cart();
+        $cart->pay();
+
+        $this->expectException(InvalidCartStatusException::class);
+
+        $cart->addProduct(ItemId::fromString(Uuid::uuid4()->toString()), self::product(), new Quantity(1));
+    }
+
+    /** A ready-made line for a product the cart already holds folds into the existing one. */
+    public function test_add_item_folds_a_second_line_of_the_same_product_into_the_first(): void
+    {
+        $cart = self::cart();
+        $product = self::product();
+        $first = new CartItem(ItemId::fromString(Uuid::uuid4()->toString()), $product, new Quantity(2));
+        $second = new CartItem(ItemId::fromString(Uuid::uuid4()->toString()), $product, new Quantity(3));
+
+        $cart->addItem($first);
+        $cart->addItem($second);
+
+        self::assertCount(1, $cart->items());
+        self::assertSame(5, $first->quantity()->asInt());
+        self::assertFalse($second->belongsTo($cart), 'the folded line never joined the cart');
+    }
+
+    public function test_a_line_is_found_by_its_id_or_by_its_product(): void
+    {
+        $cart = self::cart();
+        $product = self::product();
+        $line = $cart->addProduct(ItemId::fromString(Uuid::uuid4()->toString()), $product, new Quantity(1));
+
+        self::assertSame($line, $cart->itemOfId($line->id()));
+        self::assertSame($line, $cart->itemForProduct($product->id()));
+        self::assertNull($cart->itemOfId(ItemId::fromString(Uuid::uuid4()->toString())));
+        self::assertNull($cart->itemForProduct(ProductId::fromString(Uuid::uuid4()->toString())));
+    }
+
     public function test_ensure_pending_names_the_conflict(): void
     {
         $cart = new Cart(CartId::fromString(Uuid::uuid4()->toString()), CartStatus::paid());
@@ -152,14 +218,17 @@ final class CartTest extends TestCase
 
     private static function item(): CartItem
     {
-        $product = new Product(
+        return new CartItem(ItemId::fromString(Uuid::uuid4()->toString()), self::product());
+    }
+
+    private static function product(): Product
+    {
+        return new Product(
             ProductId::fromString(Uuid::uuid4()->toString()),
             ProductCode::fromString('SKU-' . random_int(1000, 9999)),
             Name::fromString('A product'),
             Price::of(10, 'EUR'),
             new Quantity(1),
         );
-
-        return new CartItem(ItemId::fromString(Uuid::uuid4()->toString()), $product);
     }
 }

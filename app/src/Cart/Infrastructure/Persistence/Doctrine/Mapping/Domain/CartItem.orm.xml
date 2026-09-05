@@ -8,9 +8,21 @@
             table="cart_item"
     >
 
+        <!-- A cart holds one line per product; the aggregate merges, the index settles races. -->
+        <unique-constraints>
+            <unique-constraint name="uniq_cartitem_cart_product" columns="cart_id,product_id"/>
+        </unique-constraints>
+
         <id name="id" type="item_id" column="id">
             <generator strategy="NONE"/>
         </id>
+
+        <!-- How many units of the product this line reserves. -->
+        <field name="quantity"
+               column="quantity"
+               type="quantity"
+               nullable="false"
+        />
 
         <many-to-one field="cart"
                      target-entity="Siroko\Cart\Domain\Entity\Cart"
@@ -25,8 +37,8 @@
             <join-column name="product_id" referenced-column-name="id" nullable="false" on-delete="RESTRICT"/>
         </many-to-one>
 
+        <!-- cart_id is the leading column of the unique constraint, which serves the FK and the per-cart reads. -->
         <indexes>
-            <index name="idx_cartitem_cart" columns="cart_id"/>
             <index name="idx_cartitem_product" columns="product_id"/>
         </indexes>
 

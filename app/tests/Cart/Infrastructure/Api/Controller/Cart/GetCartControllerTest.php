@@ -28,8 +28,19 @@ final class GetCartControllerTest extends ApiTestCase
             self::assertSame($itemId, $item['id'], 'items are keyed by their id');
             self::assertArrayHasKey('name', $item);
             self::assertArrayHasKey('code', $item);
+            self::assertArrayHasKey('productId', $item);
             self::assertSame("19,99\u{a0}€", $item['price']);
+            self::assertSame(1, $item['quantity']);
         }
+    }
+
+    public function test_a_line_reports_how_many_units_it_holds(): void
+    {
+        $cart = $this->persistCartWithLines(CartStatus::PENDING, [[$this->persistProduct(), 3]]);
+
+        $this->request('GET', $this->url('api_get_cart_by_id', ['id' => $cart->id()->toString()]));
+
+        self::assertSame(3, array_values($this->json()['items'])[0]['quantity']);
     }
 
     /**

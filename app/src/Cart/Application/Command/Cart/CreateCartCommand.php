@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Siroko\Cart\Application\Command\Cart;
 
+use Siroko\Cart\Domain\Entity\CartItem;
 use Siroko\Cart\Domain\Exception\InvalidCartLineException;
 use Siroko\Cart\Domain\Exception\InvalidIdentifierException;
 use Siroko\Cart\Domain\Exception\InvalidQuantityException;
@@ -20,15 +21,14 @@ final class CreateCartCommand
      * exige no ser negativa, porque el stock de un producto sí puede ser 0-,
      * sino la de un pedido: una línea de carrito pide al menos una unidad.
      */
-    public const MIN_ORDERED_QUANTITY = 1;
+    public const MIN_ORDERED_QUANTITY = CartItem::MIN_QUANTITY;
 
     /**
-     * Every unit becomes a `cart_item` row, so an unbounded quantity is an
-     * unbounded number of INSERTs from one request. The caps keep a single
-     * cart within what a person buys and a request within what the database
-     * should be asked to do at once.
+     * Most units one line takes; the cap belongs to the line itself (see
+     * CartItem) and is checked here as well so that a request over it is
+     * refused before any stock is touched.
      */
-    public const MAX_ORDERED_QUANTITY = 100;
+    public const MAX_ORDERED_QUANTITY = CartItem::MAX_QUANTITY;
 
     public const MAX_LINES = 50;
 

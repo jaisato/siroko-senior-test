@@ -22,15 +22,14 @@ final class DeleteCartItemCommandHandler
     ) {}
 
     /**
-     * Removes an item from a cart and gives its reserved unit back to the
+     * Removes a line from a cart and gives every unit it held back to the
      * product.
      *
-     * Adding a product takes a unit off its stock, and removing the item used
-     * to drop the row without putting that unit back - so every add/remove
-     * cycle destroyed one unit of inventory. A shopper filling and emptying a
-     * cart, or any client retrying a request, walked stock down to zero with
-     * nothing sold, and the product then reported itself out of stock for
-     * everyone.
+     * Adding a product takes units off its stock, and removing the line used
+     * to drop the row without putting them back - so every add/remove cycle
+     * destroyed inventory. A shopper filling and emptying a cart, or any client
+     * retrying a request, walked stock down to zero with nothing sold, and the
+     * product then reported itself out of stock for everyone.
      *
      * Las dos escrituras van en una transacción. Cada repositorio hace su
      * propio flush y el bus de escritura sólo lleva
@@ -92,7 +91,9 @@ final class DeleteCartItemCommandHandler
                 throw CartItemNotFoundException::inCart($command->itemId(), $command->cartId());
             }
 
-            $this->productRepository->returnStock($item->getProduct()->id(), 1);
+            // The whole line goes back, not one unit: a line now holds as many
+            // units as were reserved for it.
+            $this->productRepository->returnStock($item->getProduct()->id(), $item->units());
 
             $this->cartRepository->removeItem($command->cartId(), $command->itemId());
         });
