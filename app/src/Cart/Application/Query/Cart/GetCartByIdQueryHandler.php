@@ -1,30 +1,35 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Siroko\Cart\Application\Query\Cart;
 
-use Siroko\Cart\Domain\Entity\Cart;
+use Siroko\Cart\Application\Dto\Cart\CartRead;
+use Siroko\Cart\Domain\Exception\CartNotFoundException;
 use Siroko\Cart\Domain\Repository\CartRepository;
-use Siroko\Cart\Infrastructure\Api\Dto\Cart\CartRead;
 
-class GetCartByIdQueryHandler
+final class GetCartByIdQueryHandler
 {
-    /**
-     * @param CartRepository $cartRepository
-     */
     public function __construct(
         private readonly CartRepository $cartRepository,
-    ) {
-    }
+    ) {}
 
     /**
-     * @param GetCartByIdQuery $query
-     * @return CartRead
-     * @throws \Brick\Money\Exception\UnknownCurrencyException
+     * `ofId()` returns null for an unknown id. A `@var Cart` annotation used to
+     * paper over that, so the null reached `CartRead::fromModel()` and the
+     * client got a TypeError - a 500 - for asking about a cart that does not
+     * exist.
+     *
+     * @throws CartNotFoundException
      */
     public function __invoke(GetCartByIdQuery $query): CartRead
     {
-        /** @var Cart $cart */
         $cart = $this->cartRepository->ofId($query->cartId());
+
+        if (null === $cart) {
+            throw CartNotFoundException::withId($query->cartId());
+        }
+
         return CartRead::fromModel($cart);
     }
 }

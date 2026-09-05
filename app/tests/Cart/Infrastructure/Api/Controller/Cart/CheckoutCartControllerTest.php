@@ -1,88 +1,44 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Siroko\Tests\Cart\Infrastructure\Api\Controller\Cart;
 
-use Doctrine\Persistence\ManagerRegistry;
-use Liip\TestFixturesBundle\Services\DatabaseToolCollection;
 use Ramsey\Uuid\Uuid;
-use Siroko\Cart\Domain\Entity\Cart;
-use Siroko\Cart\Domain\Entity\CartItem;
-use Siroko\Cart\Domain\Entity\Product;
-use Siroko\Cart\Domain\Repository\CartRepository;
-use Siroko\Cart\Domain\Repository\ProductRepository;
-use Siroko\Cart\Domain\ValueObject\CartId;
 use Siroko\Cart\Domain\ValueObject\CartStatus;
-use Siroko\Cart\Domain\ValueObject\ItemId;
-use Siroko\Cart\Infrastructure\Persistence\Doctrine\Fixtures\ProductFixtures;
-use Symfony\Bundle\FrameworkBundle\Test\WebTestCase;
-use Symfony\Component\Routing\RouterInterface;
+use Siroko\Tests\Cart\Infrastructure\Api\ApiTestCase;
 
-class CheckoutCartControllerTest extends WebTestCase
+final class CheckoutCartControllerTest extends ApiTestCase
 {
     public function test_cart_checkout_by_id(): void
     {
-        $client = static::createClient();
+        $cart = $this->persistCart(CartStatus::PENDING, $this->persistProduct());
 
-        $registry = static::getContainer()->get(ManagerRegistry::class);
-        $emName = array_keys($registry->getManagerNames())[0];
-
-        $tools = static::getContainer()->get(DatabaseToolCollection::class)->get($emName);
-
-        $conn = static::getContainer()->get('doctrine')->getConnection();
-        if ('' === (string) $conn->getDatabase()) {
-            $conn->executeStatement('USE `siroko_cart_test`');
-        }
-
-        $tools->loadFixtures([
-            ProductFixtures::class,
-        ], true);
-
-        /** @var ProductRepository $productRepository */
-        $productRepository = static::getContainer()->get(ProductRepository::class);
-
-        /** @var array|Product[] $products */
-        $products = $productRepository->findAll(1, 5);
-
-        /** @var CartRepository $cartRepository */
-        $cartRepository = static::getContainer()->get(CartRepository::class);
-
-        $cart = new Cart(
-            CartId::fromString(Uuid::uuid4()->toString()),
-            new CartStatus(CartStatus::PENDING),
-        );
-
-        foreach ($products as $product) {
-            $item = new CartItem(ItemId::fromString(Uuid::uuid4()->toString()), $product);
-            $cart->addItem($item);
-        }
-
-        $cartRepository->save($cart);
-
-        self::assertSame(CartStatus::PENDING, $cart->status()->toInt());
-
-        /** @var RouterInterface $router */
-        $router = static::getContainer()->get(RouterInterface::class);
-        $url = $router->generate('api_cart_checkout_by_id', ['id' => $cart->id()->toString()]);
-
-        $client->request('PUT', $url, [
-            'headers' => ['accept' => 'application/json'],
-        ]);
-
-        $paidCart = json_decode(
-            $client->getResponse()->getContent(),
-            true,
-            512,
-            JSON_THROW_ON_ERROR
-        );
+        $this->request('PUT', $this->url('api_cart_checkout_by_id', ['id' => $cart->id()->toString()]));
 
         self::assertResponseStatusCodeSame(200);
-        self::assertResponseIsSuccessful();
+        $paid = $this->json();
 
-        self::assertIsArray($paidCart);
+        self::assertSame($cart->id()->toString(), $paid['id']);
+        self::assertSame(CartStatus::PAID, $paid['status']);
+        self::assertCount(1, $paid['items'], 'the lines are still there');
+        self::assertSame(CartStatus::PAID, $this->reloadCart($cart)->status()->toInt());
+    }
 
-        self::assertArrayHasKey('id', $paidCart);
-        self::assertSame($cart->id()->toString(), $paidCart['id']);
-        self::assertArrayHasKey('status', $paidCart);
-        self::assertSame(CartStatus::PAID, $paidCart['status']);
+    /** Paying twice is the client's conflict, not a server failure. */
+    public function test_a_second_checkout_is_a_409_problem(): void
+    {
+        $cart = $this->persistCart(CartStatus::PAID);
+
+        $this->request('PUT', $this->url('api_cart_checkout_by_id', ['id' => $cart->id()->toString()]));
+
+        $this->assertProblem(409, 'not pending');
+    }
+
+    public function test_an_unknown_cart_is_a_404_problem(): void
+    {
+        $this->request('PUT', $this->url('api_cart_checkout_by_id', ['id' => Uuid::uuid4()->toString()]));
+
+        $this->assertProblem(404, 'Cart');
     }
 }

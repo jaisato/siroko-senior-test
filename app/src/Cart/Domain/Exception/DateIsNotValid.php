@@ -1,30 +1,30 @@
 <?php
 
-namespace Siroko\Cart\Domain\Exception;
+declare(strict_types=1);
 
-use function sprintf;
+namespace Siroko\Cart\Domain\Exception;
 
 final class DateIsNotValid extends \Exception
 {
     public static function becauseYearMonthAndDayCombinationIsNotValid(int $year, int $month, int $day): self
     {
         return new self(
-            sprintf(
+            \sprintf(
                 'Combination of year "%s", month "%s" and day "%s" is not valid',
                 $year,
                 $month,
-                $day
-            )
+                $day,
+            ),
         );
     }
 
     public static function becauseStringDoesNotHaveAValidFormat(string $dateString): self
     {
         return new self(
-            sprintf(
+            \sprintf(
                 'String "%s" does not have a valid format',
-                $dateString
-            )
+                $dateString,
+            ),
         );
     }
 }

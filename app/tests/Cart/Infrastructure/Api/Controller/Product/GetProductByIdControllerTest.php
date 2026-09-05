@@ -1,68 +1,47 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Siroko\Tests\Cart\Infrastructure\Api\Controller\Product;
 
-use Doctrine\Persistence\ManagerRegistry;
-use Liip\TestFixturesBundle\Services\DatabaseToolCollection;
-use Siroko\Cart\Domain\Entity\Product;
-use Siroko\Cart\Domain\Repository\ProductRepository;
-use Siroko\Cart\Infrastructure\Persistence\Doctrine\Fixtures\ProductFixtures;
-use Symfony\Bundle\FrameworkBundle\Test\WebTestCase;
-use Symfony\Component\Routing\RouterInterface;
+use Ramsey\Uuid\Uuid;
+use Siroko\Tests\Cart\Infrastructure\Api\ApiTestCase;
 
-class GetProductByIdControllerTest extends WebTestCase
+final class GetProductByIdControllerTest extends ApiTestCase
 {
     /**
-     * @return void
+     * Broken until now: the read model called `Money::formatTo()`, which does
+     * not exist in the pinned brick/money release, so every product read was
+     * a 500.
      */
     public function test_get_product_by_id(): void
     {
-        $client = static::createClient();
+        $product = $this->persistProduct('Gafas Siroko', 'K3-BLACK', '129.95', 'EUR', 12);
 
-        $registry = static::getContainer()->get(ManagerRegistry::class);
-        $emName = array_keys($registry->getManagerNames())[0];
-
-        $tools = static::getContainer()->get(DatabaseToolCollection::class)->get($emName);
-
-        $conn = static::getContainer()->get('doctrine')->getConnection();
-        if ('' === (string) $conn->getDatabase()) {
-            $conn->executeStatement('USE `siroko_cart_test`');
-        }
-
-        $tools->loadFixtures([
-            ProductFixtures::class,
-        ], true);
-
-        /** @var ProductRepository $productRepository */
-        $productRepository = static::getContainer()->get(ProductRepository::class);
-
-        /** @var array|Product[] $products */
-        $products = $productRepository->findAll(1, 1);
-
-        $productId = $products[0]->id()->toString();
-
-        /** @var RouterInterface $router */
-        $router = static::getContainer()->get(RouterInterface::class);
-        $url = $router->generate('api_get_product_by_id', ['id' => $productId]);
-
-        $client->request('GET', $url, [
-            'headers' => ['accept' => 'application/json'],
-        ]);
-
-        $product = json_decode(
-            $client->getResponse()->getContent(),
-            true,
-            512,
-            JSON_THROW_ON_ERROR
-        );
+        $this->request('GET', $this->url('api_get_product_by_id', ['id' => $product->id()->toString()]));
 
         self::assertResponseStatusCodeSame(200);
-        self::assertResponseIsSuccessful();
 
-        self::assertArrayHasKey('id', $product);
-        self::assertArrayHasKey('name', $product);
-        self::assertArrayHasKey('price', $product);
-        self::assertArrayHasKey('code', $product);
-        self::assertArrayHasKey('quantity', $product);
+        self::assertSame([
+            'id' => $product->id()->toString(),
+            'name' => 'Gafas Siroko',
+            'code' => 'K3-BLACK',
+            'price' => "129,95\u{a0}€",
+            'quantity' => 12,
+        ], $this->json());
+    }
+
+    public function test_an_unknown_product_is_a_404_problem(): void
+    {
+        $this->request('GET', $this->url('api_get_product_by_id', ['id' => Uuid::uuid4()->toString()]));
+
+        $this->assertProblem(404, 'Product');
+    }
+
+    public function test_a_malformed_id_is_a_404_problem(): void
+    {
+        $this->request('GET', '/api/v1/products/123');
+
+        $this->assertProblem(404);
     }
 }

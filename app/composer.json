@@ -1,4 +1,6 @@
 {
+    "name": "siroko/cart-api",
+    "description": "Siroko senior code challenge: products and shopping cart JSON API (Symfony 7.4, API Platform, DDD + hexagonal)",
     "type": "project",
     "license": "proprietary",
     "minimum-stability": "stable",
@@ -38,7 +40,8 @@
         "symfony/serializer": "7.4.*",
         "symfony/twig-bundle": "7.4.*",
         "symfony/validator": "7.4.*",
-        "symfony/yaml": "7.4.*"
+        "symfony/yaml": "7.4.*",
+        "webmozart/assert": "^2.4"
     },
     "config": {
         "allow-plugins": {
@@ -82,6 +85,31 @@
         ],
         "post-update-cmd": [
             "@auto-scripts"
+        ],
+        "test": "@php bin/phpunit",
+        "test:unit": "@php bin/phpunit --testsuite unit",
+        "test:infra": "@php bin/phpunit --testsuite infrastructure",
+        "stan": [
+            "@php bin/console cache:warmup --env=dev --no-interaction",
+            "@php vendor/bin/phpstan analyse --memory-limit=1G"
+        ],
+        "cs": "@php vendor/bin/php-cs-fixer check --diff",
+        "cs:fix": "@php vendor/bin/php-cs-fixer fix",
+        "lint": [
+            "@php bin/console lint:container",
+            "@php bin/console lint:yaml config --parse-tags",
+            "@php bin/console doctrine:schema:validate --skip-sync --env=test"
+        ],
+        "check": [
+            "@composer validate --strict",
+            "@cs",
+            "@stan",
+            "@lint",
+            "@test"
+        ],
+        "test:coverage": [
+            "@php bin/phpunit --coverage-clover var/coverage/clover.xml --coverage-text",
+            "@php bin/coverage-threshold var/coverage/clover.xml 80"
         ]
     },
     "conflict": {
@@ -97,10 +125,26 @@
         "dama/doctrine-test-bundle": "^8.6",
         "doctrine/doctrine-fixtures-bundle": "^4.3.1",
         "fakerphp/faker": "^1.24.1",
+        "friendsofphp/php-cs-fixer": "^3.75",
         "liip/test-fixtures-bundle": "^3.9",
+        "phpstan/phpstan": "^2.1",
+        "phpstan/phpstan-doctrine": "^2.0",
+        "phpstan/phpstan-phpunit": "^2.0",
+        "phpstan/phpstan-symfony": "^2.0",
         "phpunit/phpunit": "^12.5.33",
         "symfony/browser-kit": "7.4.*",
         "symfony/css-selector": "7.4.*",
         "symfony/maker-bundle": "^1.67"
+    },
+    "scripts-descriptions": {
+        "test": "Run the whole PHPUnit suite (SQLite by default; DATABASE_URL selects the database)",
+        "test:unit": "Run the domain and application tests (no database)",
+        "test:infra": "Run the infrastructure/functional tests",
+        "stan": "Static analysis (PHPStan, level 8); warms the dev container dump the Symfony extension reads",
+        "cs": "Check the coding standard without changing files",
+        "cs:fix": "Fix the coding standard",
+        "lint": "Lint the container, the YAML config and the Doctrine mapping",
+        "check": "Everything CI runs, in order",
+        "test:coverage": "Run the suite with a coverage driver (pcov/xdebug) and enforce the 80% line threshold"
     }
 }

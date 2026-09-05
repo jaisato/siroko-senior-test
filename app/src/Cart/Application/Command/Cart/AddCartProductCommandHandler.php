@@ -1,45 +1,43 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Siroko\Cart\Application\Command\Cart;
 
-use Brick\Money\Exception\UnknownCurrencyException;
+use Siroko\Cart\Application\Dto\Cart\CartRead;
 use Siroko\Cart\Domain\Entity\Cart;
 use Siroko\Cart\Domain\Entity\CartItem;
 use Siroko\Cart\Domain\Entity\Product;
+use Siroko\Cart\Domain\Exception\CartNotFoundException;
+use Siroko\Cart\Domain\Exception\InvalidCartStatusException;
 use Siroko\Cart\Domain\Exception\OutOfStockException;
+use Siroko\Cart\Domain\Exception\ProductNotFoundException;
 use Siroko\Cart\Domain\Repository\CartItemRepository;
 use Siroko\Cart\Domain\Repository\CartRepository;
 use Siroko\Cart\Domain\Repository\ProductRepository;
 use Siroko\Cart\Domain\Transaction\TransactionalSession;
-use Siroko\Cart\Infrastructure\Api\Dto\Cart\CartRead;
-use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
-class AddCartProductCommandHandler
+final class AddCartProductCommandHandler
 {
-    /**
-     * @param CartRepository $cartRepository
-     * @param ProductRepository $productRepository
-     * @param CartItemRepository $cartItemRepository
-     */
     public function __construct(
         private readonly CartRepository $cartRepository,
         private readonly ProductRepository $productRepository,
         private readonly CartItemRepository $cartItemRepository,
         private readonly TransactionalSession $session,
-    ) {
-    }
+    ) {}
 
     /**
-     * @param AddCartProductCommand $command
-     * @return CartRead
-     * @throws UnknownCurrencyException
+     * @throws ProductNotFoundException
+     * @throws CartNotFoundException
+     * @throws InvalidCartStatusException when the cart is no longer pending
+     * @throws OutOfStockException
      */
     public function __invoke(AddCartProductCommand $command): CartRead
     {
         $product = $this->productRepository->ofId($command->productId());
 
-        if ($product === null) {
-            throw new NotFoundHttpException("Product not found");
+        if (null === $product) {
+            throw ProductNotFoundException::withId($command->productId());
         }
 
         $cart = $this->session->executeAtomically(function () use ($command, $product): Cart {
@@ -56,9 +54,16 @@ class AddCartProductCommandHandler
             // que una petición perfectamente válida devolvía un 500.
             $cart = $this->cartRepository->ofIdForUpdate($command->cartId());
 
-            if ($cart === null) {
-                throw new NotFoundHttpException("Cart not found");
+            if (null === $cart) {
+                throw CartNotFoundException::withId($command->cartId());
             }
+
+            // Checked under the row lock, before any stock moves. Adding to a
+            // paid cart reserved a unit that nothing could ever release - the
+            // removal path refuses to return stock for a cart that is not
+            // pending, correctly, because those units were sold - so every such
+            // request destroyed one unit of inventory. Same 409 as checkout.
+            $cart->ensurePending();
 
             $this->addProduct($cart, $product);
 
@@ -93,8 +98,8 @@ class AddCartProductCommandHandler
         $cart->addItem(
             new CartItem(
                 $this->cartItemRepository->nextIdentity(),
-                $product
-            )
+                $product,
+            ),
         );
 
         $this->cartRepository->save($cart);

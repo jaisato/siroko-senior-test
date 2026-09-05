@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Siroko\Tests\Cart\Application\Command\Cart;
 
 use PHPUnit\Framework\TestCase;
@@ -7,11 +9,12 @@ use Ramsey\Uuid\Uuid;
 use Siroko\Cart\Application\Command\Cart\CheckoutCartCommand;
 use Siroko\Cart\Application\Command\Cart\CheckoutCartCommandHandler;
 use Siroko\Cart\Domain\Entity\Cart;
+use Siroko\Cart\Domain\Exception\CartNotFoundException;
 use Siroko\Cart\Domain\Exception\InvalidCartStatusException;
+use Siroko\Cart\Domain\Exception\InvalidIdentifierException;
 use Siroko\Cart\Domain\Repository\CartRepository;
 use Siroko\Cart\Domain\ValueObject\CartId;
 use Siroko\Cart\Domain\ValueObject\CartStatus;
-use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
 /**
  * Cobrar un carrito es leer su estado y escribirlo. Leyendo sin bloqueo, la
@@ -42,9 +45,11 @@ final class CheckoutCartCommandHandlerTest extends TestCase
 
         $handler = new CheckoutCartCommandHandler($this->carts($cart), $this->session);
 
-        $handler(new CheckoutCartCommand($cart->id()->toString()));
+        $read = $handler(new CheckoutCartCommand($cart->id()->toString()));
 
         self::assertSame(CartStatus::PAID, $cart->status()->toInt());
+        self::assertSame(CartStatus::PAID, $read->status);
+        self::assertSame($cart->id()->toString(), $read->id);
     }
 
     public function test_the_cart_is_read_under_a_row_lock_inside_the_transaction(): void
@@ -64,24 +69,35 @@ final class CheckoutCartCommandHandlerTest extends TestCase
     }
 
     /** Cobrar dos veces es un conflicto del cliente, no un fallo del servidor. */
-    public function test_a_cart_that_is_already_paid_is_refused(): void
+    public function test_a_cart_that_is_already_paid_is_refused_and_not_written(): void
     {
         $cart = $this->cart(CartStatus::PAID);
 
         $handler = new CheckoutCartCommandHandler($this->carts($cart), $this->session);
 
-        $this->expectException(InvalidCartStatusException::class);
+        try {
+            $handler(new CheckoutCartCommand($cart->id()->toString()));
+            self::fail('expected an exception');
+        } catch (InvalidCartStatusException) {
+        }
 
-        $handler(new CheckoutCartCommand($cart->id()->toString()));
+        self::assertNotContains('saveCart', $this->session->log);
     }
 
-    public function test_an_unknown_cart_is_a_404(): void
+    public function test_an_unknown_cart_is_not_found(): void
     {
         $handler = new CheckoutCartCommandHandler($this->carts(null), $this->session);
 
-        $this->expectException(NotFoundHttpException::class);
+        $this->expectException(CartNotFoundException::class);
 
         $handler(new CheckoutCartCommand(Uuid::uuid4()->toString()));
+    }
+
+    public function test_the_command_validates_its_identifier(): void
+    {
+        $this->expectException(InvalidIdentifierException::class);
+
+        new CheckoutCartCommand('cart-1');
     }
 
     private function cart(int $status): Cart
@@ -97,16 +113,16 @@ final class CheckoutCartCommandHandlerTest extends TestCase
                 $this->session->log[] = 'lockCart';
 
                 return $cart;
-            }
+            },
         );
         // El camino sin bloqueo no debe usarse.
         $carts->method('ofId')->willReturnCallback(
-            static fn () => self::fail('the cart must be loaded with its row locked')
+            static fn() => self::fail('the cart must be loaded with its row locked'),
         );
         $carts->method('save')->willReturnCallback(
             function (): void {
                 $this->session->log[] = 'saveCart';
-            }
+            },
         );
 
         return $carts;

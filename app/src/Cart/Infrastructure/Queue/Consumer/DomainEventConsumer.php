@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Siroko\Cart\Infrastructure\Queue\Consumer;
 
 use Siroko\Cart\Domain\Event\DomainEvent;
@@ -16,7 +18,7 @@ final class DomainEventConsumer
 
     public function __construct(
         EventCommandFactory $eventCommandFactory,
-        CommandBusCli $commandBus
+        CommandBusCli $commandBus,
     ) {
         $this->eventCommandFactory = $eventCommandFactory;
         $this->commandBus          = $commandBus;
@@ -25,7 +27,7 @@ final class DomainEventConsumer
     public function __invoke(DomainEvent $event): void
     {
         $this->commandBus->handle(
-            $this->command($event)
+            $this->command($event),
         );
     }
 

@@ -9,9 +9,6 @@ doctrine:
         profiling_collect_backtrace: '%kernel.debug%'
         use_savepoints: true
         types:
-            uuid: 'Ramsey\Uuid\Doctrine\UuidType'
-            uuid_binary: 'Ramsey\Uuid\Doctrine\UuidBinaryType'
-            uuid_binary_ordered_time: 'Ramsey\Uuid\Doctrine\UuidBinaryOrderedTimeType'
             product_id: Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\ProductIdType
             product_name: Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\ProductNameType
             product_code: Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\ProductCodeType
@@ -25,7 +22,6 @@ doctrine:
         report_fields_where_declared: true
         validate_xml_mapping: true
         naming_strategy: doctrine.orm.naming_strategy.underscore_number_aware
-        #auto_mapping: true
         mappings:
             CartDomain:
                 type: xml
@@ -33,19 +29,21 @@ doctrine:
                 dir: '%kernel.project_dir%/src/Cart/Infrastructure/Persistence/Doctrine/Mapping/Domain'
                 prefix: 'Siroko\Cart\Domain\Entity'
                 alias: CartDomain
-            CartInfrastructure:
+            CartValueObject:
                 type: xml
                 is_bundle: false
-                dir: '%kernel.project_dir%/src/Cart/Infrastructure/Persistence/Doctrine/Mapping/Embeddable'
-                prefix: 'Siroko\Cart\Infrastructure\Persistence\Doctrine\Embeddable'
-                alias: CartInfrastructure
+                dir: '%kernel.project_dir%/src/Cart/Infrastructure/Persistence/Doctrine/Mapping/ValueObject'
+                prefix: 'Siroko\Cart\Domain\ValueObject'
+                alias: CartValueObject
         controller_resolver:
             auto_mapping: false
 
 when@test:
     doctrine:
         dbal:
-            # "TEST_TOKEN" is typically set by ParaTest
+            # "TEST_TOKEN" is typically set by ParaTest. Has no effect on SQLite,
+            # which the local suite uses; against MySQL (CI) it targets
+            # `<dbname>_test`.
             dbname_suffix: '_test%env(default::TEST_TOKEN)%'
 
 when@prod:

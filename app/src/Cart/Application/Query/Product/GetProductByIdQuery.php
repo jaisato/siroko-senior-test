@@ -1,28 +1,24 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Siroko\Cart\Application\Query\Product;
 
+use Siroko\Cart\Domain\Exception\InvalidIdentifierException;
 use Siroko\Cart\Domain\ValueObject\ProductId;
 
-class GetProductByIdQuery
+final class GetProductByIdQuery
 {
-    /**
-     * @var ProductId
-     */
-    private ProductId $id;
+    private readonly ProductId $id;
 
     /**
-     * @param string $id
+     * @throws InvalidIdentifierException
      */
-    public function __construct(
-        string $id,
-    ) {
+    public function __construct(string $id)
+    {
         $this->id = ProductId::fromString($id);
     }
 
-    /**
-     * @return ProductId
-     */
     public function getId(): ProductId
     {
         return $this->id;

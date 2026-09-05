@@ -1,44 +1,36 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Siroko\Cart\Application\Command\Product;
 
+use Siroko\Cart\Domain\Exception\InvalidPriceException;
+use Siroko\Cart\Domain\Exception\InvalidProductCodeException;
+use Siroko\Cart\Domain\Exception\InvalidQuantityException;
+use Siroko\Cart\Domain\Exception\NameInvalidLengthException;
 use Siroko\Cart\Domain\ValueObject\Name;
 use Siroko\Cart\Domain\ValueObject\Price;
 use Siroko\Cart\Domain\ValueObject\ProductCode;
 use Siroko\Cart\Domain\ValueObject\Quantity;
 
-class CreateProductCommand
+final class CreateProductCommand
 {
-    /**
-     * @var ProductCode
-     */
-    private ProductCode $code;
+    private readonly ProductCode $code;
+
+    private readonly Name $name;
+
+    private readonly Price $price;
+
+    private readonly Quantity $quantity;
 
     /**
-     * @var Name
-     */
-    private Name $name;
-
-    /**
-     * @var Price
-     */
-    private Price $price;
-
-    /**
-     * @var Quantity
-     */
-    private Quantity $quantity;
-
-
-    /**
-     * @param string $code
-     * @param string $name
-     * @param string $priceAmount
-     * @param string $priceCurrency
-     * @param int|string $quantity
-     * @throws \Siroko\Cart\Domain\Exception\InvalidProductCodeException
-     * @throws \Siroko\Cart\Domain\Exception\InvalidQuantityException
-     * @throws \Siroko\Cart\Domain\Exception\NameInvalidLengthException
+     * Building the command validates it: every value object applies its own
+     * rules, and the API maps each exception to a 400.
+     *
+     * @throws InvalidProductCodeException
+     * @throws NameInvalidLengthException
+     * @throws InvalidPriceException
+     * @throws InvalidQuantityException
      */
     public function __construct(
         string $code,
@@ -47,8 +39,8 @@ class CreateProductCommand
         string $priceCurrency,
         int|string $quantity,
     ) {
-        $this->code = new ProductCode($code);
-        $this->name = new Name($name);
+        $this->code = ProductCode::fromString($code);
+        $this->name = Name::fromString($name);
         $this->price = Price::of($priceAmount, $priceCurrency);
         $this->quantity = new Quantity($quantity);
     }

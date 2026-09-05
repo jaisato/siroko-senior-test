@@ -1,27 +1,26 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Siroko\Cart\Domain\Entity;
 
 use Doctrine\Common\Collections\ArrayCollection;
 use Doctrine\Common\Collections\Collection;
+use Siroko\Cart\Domain\Exception\InvalidCartStatusException;
 use Siroko\Cart\Domain\ValueObject\CartId;
 use Siroko\Cart\Domain\ValueObject\CartStatus;
 
 class Cart
 {
-    private CartId $id;
-
     /**
-     * @var Collection<int, CartItem> items in the cart
+     * @var Collection<int, CartItem>
      */
     private Collection $items;
 
-    private CartStatus $status;
-
-    public function __construct(CartId $id, CartStatus $status)
-    {
-        $this->id = $id;
-        $this->status = $status;
+    public function __construct(
+        private CartId $id,
+        private CartStatus $status,
+    ) {
         $this->items = new ArrayCollection();
     }
 
@@ -35,44 +34,69 @@ class Cart
         return $this->status;
     }
 
+    public function isPending(): bool
+    {
+        return $this->status->isPending();
+    }
+
     /**
-     * @return Collection<int, CartItem>|CartItem[]
+     * @return Collection<int, CartItem>
      */
-    public function getItems(): Collection
-    {
-        return $this->items;
-    }
-
-    public function addItem(CartItem $item): void
-    {
-        if (!$this->items->contains($item)) {
-            $this->items->add($item);
-            $item->setCart($this);
-        }
-    }
-
-    public function removeItem(CartItem $item): void
-    {
-        // The inverse side is enough: the association is mapped with
-        // orphan-removal, so dropping the item from this collection is what
-        // deletes it. Re-assigning the owning side here (the previous
-        // `$item->setCart($this)`) was a no-op that only made it look like the
-        // detach was handled.
-        $this->items->removeElement($item);
-    }
-
-    /** @return Collection<int, CartItem> */
     public function items(): Collection
     {
         return $this->items;
     }
 
     /**
-     * @param CartStatus $status
-     * @return void
+     * Only a pending cart changes. Once paid, its lines are what the customer
+     * bought; adding to it reserved stock that nothing ever released, because
+     * the removal path rightly refuses to give back units that were sold.
+     *
+     * @throws InvalidCartStatusException
      */
-    public function setStatus(CartStatus $status): void
+    public function addItem(CartItem $item): void
     {
-        $this->status = $status;
+        $this->ensurePending();
+
+        if (!$this->items->contains($item)) {
+            $this->items->add($item);
+            $item->setCart($this);
+        }
+    }
+
+    /**
+     * The inverse side is enough: the association is mapped with
+     * orphan-removal, so dropping the item from this collection is what
+     * deletes it.
+     *
+     * @throws InvalidCartStatusException
+     */
+    public function removeItem(CartItem $item): void
+    {
+        $this->ensurePending();
+
+        $this->items->removeElement($item);
+    }
+
+    /**
+     * Checking out a cart twice is a conflict, not a fresh payment.
+     *
+     * @throws InvalidCartStatusException
+     */
+    public function pay(): void
+    {
+        $this->ensurePending();
+
+        $this->status = CartStatus::paid();
+    }
+
+    /**
+     * @throws InvalidCartStatusException
+     */
+    public function ensurePending(): void
+    {
+        if (!$this->status->isPending()) {
+            throw new InvalidCartStatusException('Cart is not pending');
+        }
     }
 }

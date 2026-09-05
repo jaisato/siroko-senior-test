@@ -1,47 +1,40 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Siroko\Cart\Application\Command\Cart;
 
-use Brick\Money\Exception\UnknownCurrencyException;
+use Siroko\Cart\Application\Dto\Cart\CartRead;
 use Siroko\Cart\Domain\Entity\Cart;
 use Siroko\Cart\Domain\Entity\CartItem;
-use Siroko\Cart\Domain\Entity\Product;
+use Siroko\Cart\Domain\Exception\OutOfStockException;
+use Siroko\Cart\Domain\Exception\ProductNotFoundException;
 use Siroko\Cart\Domain\Repository\CartItemRepository;
 use Siroko\Cart\Domain\Repository\CartRepository;
-use Siroko\Cart\Domain\Exception\OutOfStockException;
 use Siroko\Cart\Domain\Repository\ProductRepository;
 use Siroko\Cart\Domain\Transaction\TransactionalSession;
 use Siroko\Cart\Domain\ValueObject\CartStatus;
 use Siroko\Cart\Domain\ValueObject\ProductId;
 use Siroko\Cart\Domain\ValueObject\Quantity;
-use Siroko\Cart\Infrastructure\Api\Dto\Cart\CartRead;
-use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
-class CreateCartCommandHandler
+final class CreateCartCommandHandler
 {
-    /**
-     * @param CartRepository $cartRepository
-     * @param CartItemRepository $cartItemRepository
-     * @param ProductRepository $productRepository
-     */
     public function __construct(
         private readonly CartRepository $cartRepository,
         private readonly CartItemRepository $cartItemRepository,
         private readonly ProductRepository $productRepository,
         private readonly TransactionalSession $session,
-    ) {
-    }
+    ) {}
 
     /**
-     * @param CreateCartCommand $command
-     * @return CartRead
-     * @throws UnknownCurrencyException
+     * @throws ProductNotFoundException
+     * @throws OutOfStockException
      */
     public function __invoke(CreateCartCommand $command): CartRead
     {
         $cart = new Cart(
             $this->cartRepository->nextIdentity(),
-            new CartStatus(CartStatus::PENDING),
+            CartStatus::pending(),
         );
 
         // Igual que en AddCartProductCommandHandler: la reserva es un ajuste
@@ -56,34 +49,34 @@ class CreateCartCommandHandler
         // stock reservado sin carrito que lo justifique.
         $this->session->executeAtomically(function () use ($cart, $command): void {
             foreach ($this->inLockOrder($command->getItems()) as $item) {
-                /** @var Product|null $product */
                 $product = $this->productRepository->ofId($item['productId']);
 
                 // `ofId()` devuelve null para un id que no existe, y la
                 // anotación `@var Product` no lo impedía: la siguiente línea
                 // llamaba a `id()` sobre null y el cliente recibía un 500 por
                 // haber pedido un producto inexistente.
-                if ($product === null) {
-                    throw new NotFoundHttpException(
-                        sprintf('Product %s not found', $item['productId']->toString())
-                    );
+                if (null === $product) {
+                    throw ProductNotFoundException::withId($item['productId']);
                 }
 
-                /** @var Quantity $quantity */
-                $quantity = $item['quantity'];
+                $units = $item['quantity']->asInt();
 
-                if (!$this->productRepository->reserveStock($product->id(), $quantity->asInt())) {
-                    throw new OutOfStockException(
-                        sprintf('Product %s does not have %d units available', $product->id()->toString(), $quantity->asInt())
-                    );
+                // The command refuses lines below MIN_ORDERED_QUANTITY; the
+                // stock movement contract (positive-int) relies on it.
+                if ($units < CreateCartCommand::MIN_ORDERED_QUANTITY) {
+                    throw new \LogicException('A cart line always asks for at least one unit; CreateCartCommand guarantees it.');
                 }
 
-                for ($i = 0; $i < $quantity->asInt(); $i++) {
+                if (!$this->productRepository->reserveStock($product->id(), $units)) {
+                    throw new OutOfStockException(\sprintf('Product %s does not have %d units available', $product->id()->toString(), $units));
+                }
+
+                for ($i = 0; $i < $units; ++$i) {
                     $cart->addItem(
                         new CartItem(
                             $this->cartItemRepository->nextIdentity(),
                             $product,
-                        )
+                        ),
                     );
                 }
             }
@@ -111,18 +104,18 @@ class CreateCartCommandHandler
      * producto quedan juntas, y volver a bloquear una fila que ya tiene esta
      * misma transacción no cuesta nada.
      *
-     * @param array<int, array{productId: ProductId, quantity: Quantity}> $items
+     * @param list<array{productId: ProductId, quantity: Quantity}> $items
      *
-     * @return array<int, array{productId: ProductId, quantity: Quantity}>
+     * @return list<array{productId: ProductId, quantity: Quantity}>
      */
     private function inLockOrder(array $items): array
     {
         usort(
             $items,
-            static fn (array $a, array $b): int => strcmp(
+            static fn(array $a, array $b): int => strcmp(
                 $a['productId']->toString(),
-                $b['productId']->toString()
-            )
+                $b['productId']->toString(),
+            ),
         );
 
         return $items;

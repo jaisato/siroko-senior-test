@@ -2,39 +2,28 @@ services:
     _defaults:
         autowire: true
         autoconfigure: true
-        public: public
+        public: false
 
     Siroko\Cart\Infrastructure\Persistence\Doctrine\Fixtures\:
         resource: '../../../src/Cart/Infrastructure/Persistence/Doctrine/Fixtures'
         tags: ['doctrine.fixture.orm']
 
-    Siroko\Cart\Domain\Repository\:
-        resource: '../../../src/Cart/Domain/Repository'
-
     Siroko\Cart\Infrastructure\Persistence\Doctrine\Repository\:
         resource: '../../../src/Cart/Infrastructure/Persistence/Doctrine/Repository'
 
+    # Includes the Tactician middleware under CommandBus/Middleware.
     Siroko\Cart\Infrastructure\CommandBus\:
         resource: '../../../src/Cart/Infrastructure/CommandBus'
 
     Siroko\Cart\Infrastructure\Event\:
         resource: '../../../src/Cart/Infrastructure/Event'
 
-    Siroko\Cart\Domain\Queue\:
-        resource: '../../../src/Cart/Domain/Queue'
-
     Siroko\Cart\Infrastructure\Queue\:
         resource: '../../../src/Cart/Infrastructure/Queue'
 
-    Siroko\Cart\Infrastructure\Service\:
-        resource: '../../../src/Cart/Infrastructure/Service'
-
-    Siroko\Cart\Infrastructure\CommandBus\Middleware\:
-        resource: '../../../src/Cart/Infrastructure/CommandBus/Middleware/*'
-
     Siroko\Cart\Infrastructure\Api\Controller\:
         resource: '../../../src/Cart/Infrastructure/Api/Controller'
-        tags: [ 'controller.service_arguments' ]
+        tags: ['controller.service_arguments']
 
     # Maps an exception onto the API's error response. Registered next to the
     # controllers that inject it; there is no broad App\ glob in this project,
@@ -43,9 +32,24 @@ services:
         arguments:
             $logger: '@?logger'
 
+    # Same contract for the errors raised before any controller runs (404 on an
+    # unknown route or a malformed id, 405, 406).
+    Siroko\Cart\Infrastructure\Api\EventListener\ApiExceptionListener:
+        arguments:
+            $apiPrefix: '%api_route_prefix%'
+            $debug: '%kernel.debug%'
+
+    # The publisher is a process-wide singleton by design; exposing it as a
+    # service lets the middleware receive it instead of reaching for the static
+    # accessor, and lets a test hand it a fresh one.
+    Siroko\Cart\Domain\Event\DomainEventPublisher:
+        factory: ['Siroko\Cart\Domain\Event\DomainEventPublisher', 'instance']
+
+    ## Ports -> adapters
     Siroko\Cart\Domain\Repository\ProductRepository: '@Siroko\Cart\Infrastructure\Persistence\Doctrine\Repository\DoctrineProductRepository'
     Siroko\Cart\Domain\Repository\CartRepository: '@Siroko\Cart\Infrastructure\Persistence\Doctrine\Repository\DoctrineCartRepository'
     Siroko\Cart\Domain\Repository\CartItemRepository: '@Siroko\Cart\Infrastructure\Persistence\Doctrine\Repository\DoctrineCartItemRepository'
+    Siroko\Cart\Domain\Queue\MessageDispatcher: '@Siroko\Cart\Infrastructure\Queue\MessageDispatcher'
 
     # Deja que un handler pida que varias escrituras vayan juntas. El bus de
     # escritura sólo lleva doctrine_rollback_only, que marca para rollback una

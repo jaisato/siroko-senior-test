@@ -1,5 +1,7 @@
+# No `host:` restriction: it was bound to API_DOMAIN (localhost), so the very
+# same request answered 404 as soon as it arrived with any other Host header -
+# behind a proxy, from another container, or from a colleague's machine.
 api:
     resource: './routes/api/'
     type: directory
-    host: '%api_domain%'
     prefix: '%api_route_prefix%'

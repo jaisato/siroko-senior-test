@@ -1,14 +1,11 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Siroko\Cart\Domain\ValueObject;
 
 use Siroko\Cart\Domain\Exception\DateIsNotValid;
-use DateTimeImmutable;
-use DateTimeInterface;
-use DateTimeZone;
-use Throwable;
 
-use function checkdate;
 use function time;
 
 final class Date
@@ -48,16 +45,16 @@ final class Date
         return new self(
             $year,
             $month,
-            $day
+            $day,
         );
     }
 
-    public static function createFromDateTime(DateTimeInterface $dateTime): self
+    public static function createFromDateTime(\DateTimeInterface $dateTime): self
     {
         return self::createFromYearMonthAndDay(
             (int) $dateTime->format('Y'),
             (int) $dateTime->format('m'),
-            (int) $dateTime->format('d')
+            (int) $dateTime->format('d'),
         );
     }
 
@@ -68,14 +65,14 @@ final class Date
     {
         try {
             return self::createFromDateTime(
-                new DateTimeImmutable(
+                new \DateTimeImmutable(
                     $date,
-                    new DateTimeZone(
-                        self::TIMEZONE
-                    )
-                )
+                    new \DateTimeZone(
+                        self::TIMEZONE,
+                    ),
+                ),
             );
-        } catch (Throwable $e) {
+        } catch (\Throwable $e) {
             throw DateIsNotValid::becauseStringDoesNotHaveAValidFormat($date);
         }
     }
@@ -83,11 +80,11 @@ final class Date
     public static function today(): self
     {
         return self::createFromDateTime(
-            (new DateTimeImmutable('now', new DateTimeZone(self::TIMEZONE)))->setTimestamp(time())
+            (new \DateTimeImmutable('now', new \DateTimeZone(self::TIMEZONE)))->setTimestamp(\time()),
         );
     }
 
-    public function equalsTo(Date $anotherDate): bool
+    public function equalsTo(self $anotherDate): bool
     {
         return $this->year === $anotherDate->year
             && $this->month === $anotherDate->month
@@ -104,14 +101,18 @@ final class Date
         return (int) $this->asDateTime()->format(self::TIMESTAMP_FORMAT);
     }
 
-    public function asDateTime(): DateTimeImmutable
+    /**
+     * Midnight of this date in the domain time zone.
+     *
+     * The instant used to depend on the server's default time zone: the date
+     * was built there and only then converted to Europe/Madrid, so on a UTC
+     * host "05/09/2026" became 02:00 Madrid time and the timestamp shifted
+     * with the host configuration.
+     */
+    public function asDateTime(): \DateTimeImmutable
     {
-        $date = new DateTimeImmutable();
-        $date = $date->setDate($this->year, $this->month, $this->day);
-        $date = $date->setTime(0, 0);
-
-        return $date->setTimezone(
-            new DateTimeZone(self::TIMEZONE)
-        );
+        return (new \DateTimeImmutable('now', new \DateTimeZone(self::TIMEZONE)))
+            ->setDate($this->year, $this->month, $this->day)
+            ->setTime(0, 0);
     }
 }

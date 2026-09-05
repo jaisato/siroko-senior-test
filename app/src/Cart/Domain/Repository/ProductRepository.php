@@ -1,28 +1,27 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Siroko\Cart\Domain\Repository;
 
 use Siroko\Cart\Domain\Entity\Product;
+use Siroko\Cart\Domain\ValueObject\ProductCode;
 use Siroko\Cart\Domain\ValueObject\ProductId;
 
 interface ProductRepository
 {
-    /**
-     * @return ProductId
-     */
     public function nextIdentity(): ProductId;
 
-    /**
-     * @param Product $product
-     * @return void
-     */
     public function save(Product $product): void;
 
-    /**
-     * @param ProductId $id
-     * @return Product|null
-     */
     public function ofId(ProductId $id): ?Product;
+
+    /**
+     * Whether a product already carries this code. The database enforces the
+     * uniqueness as well; this is the check that lets the handler answer with
+     * a domain exception instead of a driver error.
+     */
+    public function existsWithCode(ProductCode $code): bool;
 
     /**
      * Devuelve unidades al stock de forma atómica.
@@ -64,9 +63,17 @@ interface ProductRepository
     public function reserveStock(ProductId $id, int $units): bool;
 
     /**
-     * @param int $pageNumber
-     * @param int $pageSize
-     * @return array|Product[]
+     * One page of the catalogue, ordered by name.
+     *
+     * @param positive-int $pageNumber 1-based
+     * @param positive-int $pageSize
+     *
+     * @return list<Product>
      */
     public function findAll(int $pageNumber, int $pageSize): array;
+
+    /**
+     * @return int<0, max>
+     */
+    public function countAll(): int;
 }

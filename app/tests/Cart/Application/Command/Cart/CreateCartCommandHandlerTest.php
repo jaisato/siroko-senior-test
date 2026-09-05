@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Siroko\Tests\Cart\Application\Command\Cart;
 
 use PHPUnit\Framework\TestCase;
@@ -8,17 +10,18 @@ use Siroko\Cart\Application\Command\Cart\CreateCartCommand;
 use Siroko\Cart\Application\Command\Cart\CreateCartCommandHandler;
 use Siroko\Cart\Domain\Entity\Product;
 use Siroko\Cart\Domain\Exception\OutOfStockException;
+use Siroko\Cart\Domain\Exception\ProductNotFoundException;
 use Siroko\Cart\Domain\Repository\CartItemRepository;
 use Siroko\Cart\Domain\Repository\CartRepository;
 use Siroko\Cart\Domain\Repository\ProductRepository;
 use Siroko\Cart\Domain\ValueObject\CartId;
+use Siroko\Cart\Domain\ValueObject\CartStatus;
 use Siroko\Cart\Domain\ValueObject\ItemId;
 use Siroko\Cart\Domain\ValueObject\Name;
 use Siroko\Cart\Domain\ValueObject\Price;
 use Siroko\Cart\Domain\ValueObject\ProductCode;
 use Siroko\Cart\Domain\ValueObject\ProductId;
 use Siroko\Cart\Domain\ValueObject\Quantity;
-use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
 /**
  * Reservar el stock de varios productos es tomar varios cerrojos de fila, y el
@@ -40,6 +43,22 @@ final class CreateCartCommandHandlerTest extends TestCase
         $this->reserved = [];
         $this->catalogue = [];
         $this->session = new RecordingSession();
+    }
+
+    public function test_a_cart_is_created_pending_with_one_line_per_unit(): void
+    {
+        $product = $this->product('11111111-1111-4111-8111-111111111111');
+
+        $handler = $this->handler();
+
+        $read = $handler(new CreateCartCommand([
+            ['productId' => $product->id()->toString(), 'quantity' => 3],
+        ]));
+
+        self::assertTrue(Uuid::isValid($read->id));
+        self::assertSame(CartStatus::PENDING, $read->status);
+        self::assertCount(3, $read->items);
+        self::assertSame(['begin', 'saveCart', 'commit'], $this->session->log, 'reservations and the cart share one transaction');
     }
 
     /**
@@ -107,6 +126,7 @@ final class CreateCartCommandHandlerTest extends TestCase
 
         // El orden lo fija el test de arriba; aquí sólo importa el
         // emparejamiento producto-cantidad tras reordenar.
+        self::assertIsArray($units);
         ksort($units);
 
         self::assertSame(
@@ -118,11 +138,11 @@ final class CreateCartCommandHandlerTest extends TestCase
         );
     }
 
-    public function test_an_unknown_product_is_a_404_and_not_a_fatal(): void
+    public function test_an_unknown_product_is_not_found_and_not_a_fatal(): void
     {
         $handler = $this->handler();
 
-        $this->expectException(NotFoundHttpException::class);
+        $this->expectException(ProductNotFoundException::class);
 
         $handler(new CreateCartCommand([
             ['productId' => Uuid::uuid4()->toString(), 'quantity' => 1],
@@ -146,8 +166,8 @@ final class CreateCartCommandHandlerTest extends TestCase
     {
         $product = new Product(
             ProductId::fromString($id),
-            new ProductCode('ABC123'),
-            new Name('A product'),
+            ProductCode::fromString('ABC123'),
+            Name::fromString('A product'),
             Price::of('10.00', 'EUR'),
             new Quantity(50),
         );
@@ -164,7 +184,7 @@ final class CreateCartCommandHandlerTest extends TestCase
     {
         $carts = $this->createStub(CartRepository::class);
         $carts->method('nextIdentity')->willReturnCallback(
-            static fn () => CartId::fromString(Uuid::uuid4()->toString())
+            static fn() => CartId::fromString(Uuid::uuid4()->toString()),
         );
         $carts->method('save')->willReturnCallback(function (): void {
             $this->session->log[] = 'saveCart';
@@ -172,12 +192,12 @@ final class CreateCartCommandHandlerTest extends TestCase
 
         $items = $this->createStub(CartItemRepository::class);
         $items->method('nextIdentity')->willReturnCallback(
-            static fn () => ItemId::fromString(Uuid::uuid4()->toString())
+            static fn() => ItemId::fromString(Uuid::uuid4()->toString()),
         );
 
         $products = $this->createStub(ProductRepository::class);
         $products->method('ofId')->willReturnCallback(
-            fn (ProductId $id): ?Product => $this->catalogue[$id->toString()] ?? null
+            fn(ProductId $id): ?Product => $this->catalogue[$id->toString()] ?? null,
         );
         $products->method('reserveStock')->willReturnCallback(
             function (ProductId $id, int $requested) use (&$units, $available): bool {
@@ -187,12 +207,12 @@ final class CreateCartCommandHandlerTest extends TestCase
 
                 $this->reserved[] = $id->toString();
 
-                if ($units !== null) {
+                if (null !== $units) {
                     $units[$id->toString()] = $requested;
                 }
 
                 return true;
-            }
+            },
         );
 
         return new CreateCartCommandHandler($carts, $items, $products, $this->session);

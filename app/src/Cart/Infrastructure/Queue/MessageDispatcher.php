@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Siroko\Cart\Infrastructure\Queue;
 
 use Siroko\Cart\Domain\Event\DelayedDomainEvent;
@@ -22,7 +24,7 @@ final class MessageDispatcher implements \Siroko\Cart\Domain\Queue\MessageDispat
     {
         $this->messageBus->dispatch(
             $message,
-            self::envelopes($message)
+            self::envelopes($message),
         );
     }
 
@@ -39,8 +41,8 @@ final class MessageDispatcher implements \Siroko\Cart\Domain\Queue\MessageDispat
             new DelayStamp(
                 Utilities::millisecondsBetweenTwoDateTime(
                     $message->delayedOn(),
-                    DateTime::now()
-                )
+                    DateTime::now(),
+                ),
             ),
         ];
     }

@@ -5,8 +5,7 @@
                                       http://doctrine-project.org/schemas/orm/doctrine-mapping.xsd">
 
     <entity name="Siroko\Cart\Domain\Entity\Cart"
-            table="cart"
-            repository-class="Siroko\Cart\Infrastructure\Persistence\Doctrine\Repository\DoctrineCartRepository">
+            table="cart">
 
         <id name="id" type="cart_id" column="id">
             <generator strategy="NONE"/>

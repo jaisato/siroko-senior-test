@@ -1,11 +1,8 @@
+# The API Platform resources (src/Cart/Infrastructure/Api/Resource) are the
+# single source of routes. The controllers used to declare the same paths
+# through #[Route] attributes loaded here as well; the duplicates never matched
+# and drifted without names or requirements.
 api_platform:
     resource: .
     type: api_platform
-    prefix: /
-
-api_routes:
-    resource:
-        path: '../../../src/Cart/Infrastructure/Api/Controller/'
-        namespace: 'Siroko\Cart\Infrastructure\Api\Controller'
-    type: attribute
     prefix: /

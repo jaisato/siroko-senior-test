@@ -1,8 +1,8 @@
 <?php
 
-namespace Siroko\Cart\Domain\Event;
+declare(strict_types=1);
 
-use BadMethodCallException;
+namespace Siroko\Cart\Domain\Event;
 
 final class DomainEventPublisher
 {
@@ -13,13 +13,8 @@ final class DomainEventPublisher
 
     private int $id = 0;
 
-    private function __construct()
-    {
-    }
+    private function __construct() {}
 
-    /**
-     * @return DomainEventPublisher
-     */
     public static function instance(): self
     {
         if (! isset(self::$instance)) {
@@ -30,18 +25,18 @@ final class DomainEventPublisher
     }
 
     /**
-     * @throws BadMethodCallException
+     * @throws \BadMethodCallException
      */
     public function __clone()
     {
-        throw new BadMethodCallException('Clone is not supported');
+        throw new \BadMethodCallException('Clone is not supported');
     }
 
     public function subscribe(DomainEventSubscriber $subscriber): int
     {
         $id                     = $this->id;
         $this->subscribers[$id] = $subscriber;
-        $this->id++;
+        ++$this->id;
 
         return $id;
     }

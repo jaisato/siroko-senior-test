@@ -1,30 +1,28 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Siroko\Cart\Application\Query\Product;
 
-use Brick\Money\Exception\UnknownCurrencyException;
+use Siroko\Cart\Application\Dto\Product\ProductRead;
+use Siroko\Cart\Domain\Exception\ProductNotFoundException;
 use Siroko\Cart\Domain\Repository\ProductRepository;
-use Siroko\Cart\Infrastructure\Api\Dto\Product\ProductRead;
-use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
-class GetProductByIdQueryHandler
+final class GetProductByIdQueryHandler
 {
     public function __construct(
-        private readonly ProductRepository $repository
-    ) {
-    }
+        private readonly ProductRepository $repository,
+    ) {}
 
     /**
-     * @param GetProductByIdQuery $query
-     * @return ProductRead
-     * @throws UnknownCurrencyException
+     * @throws ProductNotFoundException
      */
     public function __invoke(GetProductByIdQuery $query): ProductRead
     {
         $product = $this->repository->ofId($query->getId());
 
         if (null === $product) {
-            throw new NotFoundHttpException("Product with id {$query->getId()} not found");
+            throw ProductNotFoundException::withId($query->getId());
         }
 
         return ProductRead::fromModel($product);

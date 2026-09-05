@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Siroko\Cart\Infrastructure\Persistence\Doctrine\Type;
 
 use Siroko\Cart\Domain\ValueObject\ProductCode;

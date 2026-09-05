@@ -1,25 +1,21 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Siroko\Cart\Application\Command\Cart;
 
+use Siroko\Cart\Domain\Exception\InvalidIdentifierException;
 use Siroko\Cart\Domain\ValueObject\CartId;
 use Siroko\Cart\Domain\ValueObject\ProductId;
 
-class AddCartProductCommand
+final class AddCartProductCommand
 {
-    /**
-     * @var CartId
-     */
-    private CartId $cartId;
+    private readonly CartId $cartId;
+
+    private readonly ProductId $productId;
 
     /**
-     * @var ProductId
-     */
-    private ProductId $productId;
-
-    /**
-     * @param string $cartId
-     * @param string $productId
+     * @throws InvalidIdentifierException
      */
     public function __construct(string $cartId, string $productId)
     {
@@ -27,17 +23,11 @@ class AddCartProductCommand
         $this->productId = ProductId::fromString($productId);
     }
 
-    /**
-     * @return CartId
-     */
     public function cartId(): CartId
     {
         return $this->cartId;
     }
 
-    /**
-     * @return ProductId
-     */
     public function productId(): ProductId
     {
         return $this->productId;
