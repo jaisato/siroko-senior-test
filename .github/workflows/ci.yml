@@ -1,0 +1,149 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: app
+
+env:
+  COMPOSER_ALLOW_SUPERUSER: '1'
+
+jobs:
+  lint:
+    name: Lint (PHP ${{ matrix.php }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.3', '8.4']
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: intl, pdo_mysql, pdo_sqlite, amqp, zip
+          coverage: none
+          tools: composer:v2
+
+      - name: Locate the Composer cache
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: composer-${{ runner.os }}-php${{ matrix.php }}-${{ hashFiles('app/composer.lock') }}
+          restore-keys: |
+            composer-${{ runner.os }}-php${{ matrix.php }}-
+
+      - name: Validate composer.json
+        run: composer validate --strict
+
+      - name: Install dependencies
+        run: composer install --no-interaction --no-progress --prefer-dist
+
+      - name: Coding standard
+        run: composer cs
+
+      - name: Static analysis (PHPStan level 8)
+        run: composer stan
+
+      - name: Lint container, YAML config and Doctrine mapping
+        run: composer lint
+
+  test:
+    name: Tests (PHP ${{ matrix.php }}, MySQL 8)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.3', '8.4']
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: siroko_cart
+          MYSQL_USER: siroko
+          MYSQL_PASSWORD: siroko
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
+    env:
+      # The test environment appends `_test` (doctrine dbname_suffix), so the
+      # suite runs against siroko_cart_test with the application user.
+      DATABASE_URL: mysql://siroko:siroko@127.0.0.1:3306/siroko_cart?serverVersion=8.0&charset=utf8mb4
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: intl, pdo_mysql, pdo_sqlite, amqp, zip
+          coverage: pcov
+          tools: composer:v2
+
+      - name: Locate the Composer cache
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: composer-${{ runner.os }}-php${{ matrix.php }}-${{ hashFiles('app/composer.lock') }}
+          restore-keys: |
+            composer-${{ runner.os }}-php${{ matrix.php }}-
+
+      - name: Install dependencies
+        run: composer install --no-interaction --no-progress --prefer-dist
+
+      - name: Give the application user its test database (never run as root)
+        env:
+          DATABASE_URL: mysql://root:root@127.0.0.1:3306/mysql?serverVersion=8.0
+        run: |
+          php bin/console dbal:run-sql --env=dev "CREATE DATABASE IF NOT EXISTS siroko_cart_test CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+          php bin/console dbal:run-sql --env=dev "GRANT ALL PRIVILEGES ON siroko_cart_test.* TO 'siroko'@'%'"
+
+      - name: Create the test database
+        run: php bin/console doctrine:database:create --env=test --if-not-exists
+
+      - name: Run the migrations
+        run: php bin/console doctrine:migrations:migrate --env=test --no-interaction
+
+      - name: Migrations and mapping agree
+        run: php bin/console doctrine:schema:validate --env=test
+
+      - name: PHPUnit (with coverage)
+        run: php bin/phpunit --coverage-clover var/coverage/clover.xml --coverage-text
+
+      - name: PHPUnit (MySQL-only behaviour)
+        run: php bin/phpunit --group mysql
+
+      - name: Coverage threshold (80% of lines)
+        run: php bin/coverage-threshold var/coverage/clover.xml 80
+
+      - name: Keep the coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-php${{ matrix.php }}
+          path: app/var/coverage/clover.xml
+          if-no-files-found: ignore
