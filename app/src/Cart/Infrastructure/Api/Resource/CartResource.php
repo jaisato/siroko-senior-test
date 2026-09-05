@@ -7,6 +7,7 @@ namespace Siroko\Cart\Infrastructure\Api\Resource;
 use ApiPlatform\Metadata as API;
 use ApiPlatform\OpenApi\Model;
 use Siroko\Cart\Application\Dto\Cart\CartRead;
+use Siroko\Cart\Application\Dto\Cart\CartReadCollection;
 use Siroko\Cart\Application\Dto\Cart\CheckoutRead;
 use Siroko\Cart\Infrastructure\Api\Controller\Cart\AddCartProductController;
 use Siroko\Cart\Infrastructure\Api\Controller\Cart\CancelCartController;
@@ -15,6 +16,7 @@ use Siroko\Cart\Infrastructure\Api\Controller\Cart\CheckoutCartController;
 use Siroko\Cart\Infrastructure\Api\Controller\Cart\DeleteCartItemController;
 use Siroko\Cart\Infrastructure\Api\Controller\Cart\DeliverCartController;
 use Siroko\Cart\Infrastructure\Api\Controller\Cart\GetCartController;
+use Siroko\Cart\Infrastructure\Api\Controller\Cart\ListCartsController;
 use Siroko\Cart\Infrastructure\Api\Controller\Cart\PostCartController;
 use Symfony\Component\Routing\Requirement\Requirement;
 
@@ -51,6 +53,23 @@ use Symfony\Component\Routing\Requirement\Requirement;
                         description: 'Cart UUID',
                         schema: ['type' => 'string', 'format' => 'uuid'],
                     ),
+                ],
+            ),
+        ),
+        new API\GetCollection(
+            name: 'api_list_carts',
+            uriTemplate: '/v1/carts',
+            controller: ListCartsController::class,
+            read: false,
+            output: CartReadCollection::class,
+            paginationEnabled: false,
+            openapi: new Model\Operation(
+                summary: 'List carts',
+                description: 'One page of carts, newest first, with pagination metadata (page, pageSize, total, pages). With authentication on (API_TOKENS set) only the caller\'s carts are listed; without it, every cart.',
+                parameters: [
+                    new Model\Parameter(name: 'pageNumber', in: 'query', schema: ['type' => 'integer', 'minimum' => 1, 'default' => 1]),
+                    new Model\Parameter(name: 'pageSize', in: 'query', schema: ['type' => 'integer', 'minimum' => 1, 'maximum' => 100, 'default' => 20]),
+                    new Model\Parameter(name: 'status', in: 'query', description: '1 pending, 2 paid, 3 delivered, 4 canceled', schema: ['type' => 'integer', 'enum' => [1, 2, 3, 4]]),
                 ],
             ),
         ),

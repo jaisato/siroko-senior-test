@@ -17,6 +17,7 @@ services:
       DATABASE_URL: "mysql://${MYSQL_USER:-siroko}:${MYSQL_PASSWORD:-siroko_dev_password}@db:3306/${MYSQL_DATABASE:-siroko_cart}?serverVersion=8.0&charset=utf8mb4"
       MESSENGER_TRANSPORT_DSN: "doctrine://default"
       CART_RESERVATION_TTL: ${CART_RESERVATION_TTL:-1800}
+      API_TOKENS: ${API_TOKENS:-}
     volumes:
       - ./:/var/www:cached
     depends_on:

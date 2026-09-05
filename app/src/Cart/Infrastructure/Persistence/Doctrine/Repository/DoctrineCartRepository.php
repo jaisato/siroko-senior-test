@@ -7,15 +7,18 @@ namespace Siroko\Cart\Infrastructure\Persistence\Doctrine\Repository;
 use Doctrine\DBAL\LockMode;
 use Doctrine\DBAL\Types\Types;
 use Doctrine\ORM\EntityManagerInterface;
+use Doctrine\ORM\QueryBuilder;
 use Ramsey\Uuid\Uuid;
 use Siroko\Cart\Domain\Entity\Cart;
 use Siroko\Cart\Domain\Entity\CartItem;
 use Siroko\Cart\Domain\Repository\CartRepository;
 use Siroko\Cart\Domain\ValueObject\CartId;
 use Siroko\Cart\Domain\ValueObject\CartStatus;
+use Siroko\Cart\Domain\ValueObject\CustomerId;
 use Siroko\Cart\Domain\ValueObject\ItemId;
 use Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\CartIdType;
 use Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\CartStatusType;
+use Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\CustomerIdType;
 use Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\ItemIdType;
 
 final class DoctrineCartRepository implements CartRepository
@@ -60,6 +63,47 @@ final class DoctrineCartRepository implements CartRepository
             ->getOneOrNullResult();
 
         return $cart instanceof Cart ? $cart : null;
+    }
+
+    public function search(?CustomerId $owner, ?CartStatus $status, int $pageNumber, int $pageSize): array
+    {
+        /** @var list<Cart> $carts */
+        $carts = $this->matching($owner, $status)
+            ->orderBy('c.createdAt', 'DESC')
+            ->addOrderBy('c.id', 'DESC')
+            ->setFirstResult(($pageNumber - 1) * $pageSize)
+            ->setMaxResults($pageSize)
+            ->getQuery()
+            ->getResult();
+
+        return $carts;
+    }
+
+    public function countMatching(?CustomerId $owner, ?CartStatus $status): int
+    {
+        $count = $this->matching($owner, $status)
+            ->select('COUNT(c.id)')
+            ->getQuery()
+            ->getSingleScalarResult();
+
+        return max(0, (int) $count);
+    }
+
+    private function matching(?CustomerId $owner, ?CartStatus $status): QueryBuilder
+    {
+        $qb = $this->em->createQueryBuilder()
+            ->select('c')
+            ->from(Cart::class, 'c');
+
+        if (null !== $owner) {
+            $qb->andWhere('c.customerId = :owner')->setParameter('owner', $owner, CustomerIdType::NAME);
+        }
+
+        if (null !== $status) {
+            $qb->andWhere('c.status = :status')->setParameter('status', $status, CartStatusType::NAME);
+        }
+
+        return $qb;
     }
 
     public function expiredPendingIds(\DateTimeImmutable $now, int $limit): array

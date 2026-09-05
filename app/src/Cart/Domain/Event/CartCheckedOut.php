@@ -26,6 +26,7 @@ final class CartCheckedOut implements DomainEvent
         private readonly string $totalCurrency,
         private readonly int $itemCount,
         private readonly int $occurredOn,
+        private readonly ?string $customerId = null,
     ) {}
 
     public static function fromOrder(Order $order): self
@@ -37,7 +38,13 @@ final class CartCheckedOut implements DomainEvent
             $order->total()->currency()->getCurrencyCode(),
             $order->itemCount(),
             $order->createdAt()->getTimestamp(),
+            $order->customerId()?->toString(),
         );
+    }
+
+    public function customerId(): ?string
+    {
+        return $this->customerId;
     }
 
     public function orderId(): string
@@ -65,6 +72,7 @@ final class CartCheckedOut implements DomainEvent
             'cartId' => $this->cartId,
             'total' => ['amount' => $this->totalAmount, 'currency' => $this->totalCurrency],
             'itemCount' => $this->itemCount,
+            'customerId' => $this->customerId,
             'occurredOn' => $this->occurredOn,
         ];
     }

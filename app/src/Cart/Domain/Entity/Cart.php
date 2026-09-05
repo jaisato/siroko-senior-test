@@ -7,12 +7,14 @@ namespace Siroko\Cart\Domain\Entity;
 use Brick\Money\Currency;
 use Doctrine\Common\Collections\ArrayCollection;
 use Doctrine\Common\Collections\Collection;
+use Siroko\Cart\Domain\Exception\CartNotFoundException;
 use Siroko\Cart\Domain\Exception\EmptyCartException;
 use Siroko\Cart\Domain\Exception\InvalidCartStatusException;
 use Siroko\Cart\Domain\Exception\InvalidQuantityException;
 use Siroko\Cart\Domain\Exception\PriceIsNotSameCurrencyException;
 use Siroko\Cart\Domain\ValueObject\CartId;
 use Siroko\Cart\Domain\ValueObject\CartStatus;
+use Siroko\Cart\Domain\ValueObject\CustomerId;
 use Siroko\Cart\Domain\ValueObject\ItemId;
 use Siroko\Cart\Domain\ValueObject\Price;
 use Siroko\Cart\Domain\ValueObject\ProductId;
@@ -34,6 +36,12 @@ class Cart
     private ?\DateTimeImmutable $expiresAt;
 
     /**
+     * The customer the cart belongs to; null for a cart opened while the API
+     * ran without authentication, which belongs to nobody in particular.
+     */
+    private ?CustomerId $customerId;
+
+    /**
      * `$createdAt` defaults to the wall clock for the benefit of tests and
      * fixtures; the application opens carts through open(), which takes the
      * instant from the injected clock.
@@ -43,27 +51,61 @@ class Cart
         private CartStatus $status,
         ?\DateTimeImmutable $createdAt = null,
         ?\DateTimeImmutable $expiresAt = null,
+        ?CustomerId $customerId = null,
     ) {
         $this->items = new ArrayCollection();
         $this->createdAt = $createdAt ?? new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
         $this->expiresAt = $expiresAt;
+        $this->customerId = $customerId;
     }
 
     /**
-     * A new, pending cart whose reservation lasts `$reservationTtl` from now.
+     * A new, pending cart whose reservation lasts `$reservationTtl` from now,
+     * owned by `$customer` when the caller is known.
      *
      * Units are taken off the shelf the moment a line is added, so a cart that
      * is never checked out would hold them forever. The deadline is what lets
      * the release sweep (cart:release-expired) give them back.
      */
-    public static function open(CartId $id, \DateTimeImmutable $now, \DateInterval $reservationTtl): self
+    public static function open(CartId $id, \DateTimeImmutable $now, \DateInterval $reservationTtl, ?CustomerId $customer = null): self
     {
-        return new self($id, CartStatus::pending(), $now, $now->add($reservationTtl));
+        return new self($id, CartStatus::pending(), $now, $now->add($reservationTtl), $customer);
     }
 
     public function id(): CartId
     {
         return $this->id;
+    }
+
+    public function customerId(): ?CustomerId
+    {
+        return $this->customerId;
+    }
+
+    /**
+     * Whether `$caller` may see and change this cart.
+     *
+     * With authentication off there is no caller, and every cart is open. With
+     * it on, a cart that has an owner is that owner's alone; a cart without one
+     * predates authentication and stays open to any authenticated caller, so
+     * turning authentication on does not strand the carts that already exist.
+     */
+    public function isAccessibleBy(?CustomerId $caller): bool
+    {
+        return null === $caller || null === $this->customerId || $this->customerId->equals($caller);
+    }
+
+    /**
+     * Someone else's cart does not exist as far as the caller is concerned:
+     * answering 403 would confirm the identifier belongs to somebody.
+     *
+     * @throws CartNotFoundException
+     */
+    public function ensureAccessibleBy(?CustomerId $caller): void
+    {
+        if (!$this->isAccessibleBy($caller)) {
+            throw CartNotFoundException::withId($this->id);
+        }
     }
 
     public function createdAt(): \DateTimeImmutable

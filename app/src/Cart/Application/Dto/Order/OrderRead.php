@@ -13,6 +13,7 @@ use Siroko\Cart\Domain\Entity\Order;
 final class OrderRead
 {
     /**
+     * @param string|null                             $customerId  the owner of the cart that was paid; null for an ownerless cart
      * @param list<OrderLineRead>                     $lines
      * @param array{amount: string, currency: string} $total
      * @param string                                  $createdAt   RFC 3339, UTC
@@ -21,6 +22,7 @@ final class OrderRead
     public function __construct(
         public readonly string $id,
         public readonly string $cartId,
+        public readonly ?string $customerId,
         public readonly int $itemCount,
         public readonly array $total,
         public readonly array $lines,
@@ -39,6 +41,7 @@ final class OrderRead
         return new self(
             id: $order->id()->toString(),
             cartId: $order->cartId()->toString(),
+            customerId: $order->customerId()?->toString(),
             itemCount: $order->itemCount(),
             total: $order->total()->jsonSerialize(),
             lines: $lines,

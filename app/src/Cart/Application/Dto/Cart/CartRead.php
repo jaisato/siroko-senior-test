@@ -33,8 +33,9 @@ final class CartRead
      * @param string|null        $currency  ISO 4217 code every line is priced in; null while the cart is empty
      * @param Money|null         $subtotal  sum of the line totals; null while the cart is empty
      * @param Money|null         $total     what the customer pays; equals the subtotal until taxes or discounts exist
-     * @param string             $createdAt RFC 3339, UTC
-     * @param string|null        $expiresAt RFC 3339, UTC; when a pending cart's reservation lapses, null once paid or canceled
+     * @param string             $createdAt  RFC 3339, UTC
+     * @param string|null        $expiresAt  RFC 3339, UTC; when a pending cart's reservation lapses, null once paid or canceled
+     * @param string|null        $customerId the owner; null for a cart opened without authentication
      */
     public function __construct(
         public readonly string $id,
@@ -46,6 +47,7 @@ final class CartRead
         public readonly ?array $total = null,
         public readonly string $createdAt = '1970-01-01T00:00:00+00:00',
         public readonly ?string $expiresAt = null,
+        public readonly ?string $customerId = null,
     ) {}
 
     /**
@@ -69,6 +71,7 @@ final class CartRead
             total: self::money($cart->total()),
             createdAt: self::utc($cart->createdAt()),
             expiresAt: null === $cart->expiresAt() ? null : self::utc($cart->expiresAt()),
+            customerId: $cart->customerId()?->toString(),
         );
     }
 

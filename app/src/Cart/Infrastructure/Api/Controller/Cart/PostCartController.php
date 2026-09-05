@@ -7,6 +7,7 @@ namespace Siroko\Cart\Infrastructure\Api\Controller\Cart;
 use Siroko\Cart\Application\Command\Cart\CreateCartCommand;
 use Siroko\Cart\Domain\CommandBus\CommandBusWrite;
 use Siroko\Cart\Infrastructure\Api\ApiExceptionMapper;
+use Siroko\Cart\Infrastructure\Api\Security\CurrentCustomer;
 use Siroko\Cart\Infrastructure\Api\JsonRequest;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
@@ -19,6 +20,7 @@ final class PostCartController
     public function __construct(
         private readonly CommandBusWrite $commandBus,
         private readonly ApiExceptionMapper $errors,
+        private readonly CurrentCustomer $customer,
     ) {}
 
     public function __invoke(Request $request): JsonResponse
@@ -33,6 +35,7 @@ final class PostCartController
             $cart = $this->commandBus->handle(
                 new CreateCartCommand(
                     JsonRequest::requireList($jsonData, 'products', ['productId', 'quantity']),
+                    $this->customer->idOrNull(),
                 ),
             );
 

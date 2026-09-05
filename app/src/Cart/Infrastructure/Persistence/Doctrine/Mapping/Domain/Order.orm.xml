@@ -21,6 +21,9 @@
              snapshot and must not load, or follow, the cart it came from. -->
         <field name="cartId" column="cart_id" type="cart_id" nullable="false"/>
 
+        <!-- Copied from the cart at checkout; null for an ownerless cart. -->
+        <field name="customerId" column="customer_id" type="customer_id" length="64" nullable="true"/>
+
         <field name="lines" column="lines" type="order_lines" nullable="false"/>
 
         <field name="itemCount" column="item_count" type="integer" nullable="false"/>

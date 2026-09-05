@@ -16,6 +16,7 @@ use Siroko\Cart\Domain\Exception\DuplicateProductCodeException;
 use Siroko\Cart\Domain\Exception\EmptyCartException;
 use Siroko\Cart\Domain\Exception\InvalidCartLineException;
 use Siroko\Cart\Domain\Exception\InvalidCartStatusException;
+use Siroko\Cart\Domain\Exception\InvalidCustomerIdException;
 use Siroko\Cart\Domain\Exception\InvalidIdentifierException;
 use Siroko\Cart\Domain\Exception\InvalidPriceException;
 use Siroko\Cart\Domain\Exception\InvalidProductCodeException;
@@ -77,6 +78,7 @@ final class ApiExceptionMapperTest extends TestCase
         yield 'empty product update' => [InvalidProductUpdateException::nothingToChange(), 400];
         yield 'ambiguous stock adjustment' => [InvalidStockAdjustmentException::exactlyOneOfQuantityOrDelta(), 400];
         yield 'bad id' => [InvalidIdentifierException::forType(CartId::class), 400];
+        yield 'bad customer id' => [InvalidCustomerIdException::malformed(64), 400];
         yield 'bad price' => [InvalidPriceException::negative(), 400];
         yield 'bad quantity' => [new InvalidQuantityException('Quantity must be an integer.'), 400];
         yield 'bad code' => [new InvalidProductCodeException('too long'), 400];

@@ -33,6 +33,7 @@ final class DeliverCartCommandHandler
                 throw CartNotFoundException::withId($command->cartId());
             }
 
+            $cart->ensureAccessibleBy($command->customer());
             $cart->deliver();
 
             $this->cartRepository->save($cart);

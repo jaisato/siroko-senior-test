@@ -12,6 +12,7 @@ use Siroko\Cart\Domain\Entity\CartItem;
 use Siroko\Cart\Domain\Entity\Product;
 use Siroko\Cart\Domain\ValueObject\CartId;
 use Siroko\Cart\Domain\ValueObject\CartStatus;
+use Siroko\Cart\Domain\ValueObject\CustomerId;
 use Siroko\Cart\Domain\ValueObject\ItemId;
 use Siroko\Cart\Domain\ValueObject\Name;
 use Siroko\Cart\Domain\ValueObject\Price;
@@ -187,12 +188,14 @@ abstract class ApiTestCase extends WebTestCase
      *
      * @param list<array{0: Product, 1: int}> $lines
      */
-    protected function persistCartWithLines(int $status, array $lines, ?\DateTimeImmutable $expiresAt = null): Cart
+    protected function persistCartWithLines(int $status, array $lines, ?\DateTimeImmutable $expiresAt = null, ?string $customerId = null): Cart
     {
+        $owner = null === $customerId ? null : CustomerId::fromString($customerId);
+
         if ([] === $lines && CartStatus::PENDING !== $status) {
-            $cart = new Cart(CartId::fromString(Uuid::uuid4()->toString()), new CartStatus($status));
+            $cart = new Cart(CartId::fromString(Uuid::uuid4()->toString()), new CartStatus($status), null, null, $owner);
         } else {
-            $cart = new Cart(CartId::fromString(Uuid::uuid4()->toString()), CartStatus::pending(), null, $expiresAt);
+            $cart = new Cart(CartId::fromString(Uuid::uuid4()->toString()), CartStatus::pending(), null, $expiresAt, $owner);
 
             foreach ($lines as [$product, $units]) {
                 $cart->addItem(new CartItem(ItemId::fromString(Uuid::uuid4()->toString()), $product, new Quantity($units)));

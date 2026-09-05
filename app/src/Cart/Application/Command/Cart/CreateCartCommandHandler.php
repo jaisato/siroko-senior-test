@@ -46,7 +46,7 @@ final class CreateCartCommandHandler
      */
     public function __invoke(CreateCartCommand $command): CartRead
     {
-        $cart = Cart::open($this->cartRepository->nextIdentity(), $this->clock->now(), $this->reservationTtl);
+        $cart = Cart::open($this->cartRepository->nextIdentity(), $this->clock->now(), $this->reservationTtl, $command->customer());
 
         // Igual que en AddCartProductCommandHandler: la reserva es un ajuste
         // relativo y condicional, no un `setQuantity()` con un valor absoluto

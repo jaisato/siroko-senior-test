@@ -7,6 +7,7 @@ namespace Siroko\Cart\Infrastructure\Api\Controller\Cart;
 use Siroko\Cart\Application\Command\Cart\DeliverCartCommand;
 use Siroko\Cart\Domain\CommandBus\CommandBusWrite;
 use Siroko\Cart\Infrastructure\Api\ApiExceptionMapper;
+use Siroko\Cart\Infrastructure\Api\Security\CurrentCustomer;
 use Symfony\Component\HttpFoundation\JsonResponse;
 
 /**
@@ -17,13 +18,14 @@ final class DeliverCartController
     public function __construct(
         private readonly CommandBusWrite $commandBus,
         private readonly ApiExceptionMapper $errors,
+        private readonly CurrentCustomer $customer,
     ) {}
 
     public function __invoke(string $id): JsonResponse
     {
         try {
             $cart = $this->commandBus->handle(
-                new DeliverCartCommand($id),
+                new DeliverCartCommand($id, $this->customer->idOrNull()),
             );
 
             return new JsonResponse($cart);

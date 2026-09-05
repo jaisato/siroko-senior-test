@@ -11,9 +11,14 @@ security:
             security: false
         main:
             lazy: true
-            # The API keeps no session; authentication (when added) is per request.
+            # The API keeps no session; authentication is per request.
             stateless: true
             provider: users_in_memory
+            # Static API tokens (API_TOKENS). The authenticator supports no
+            # request while the variable is empty, so by default every call is
+            # anonymous and the documented try-it-out flow needs no token.
+            custom_authenticators:
+                - Siroko\Cart\Infrastructure\Api\Security\ApiTokenAuthenticator
 
     # Easy way to control access for large sections of your site
     # Note: Only the *first* access control that matches will be used

@@ -25,6 +25,8 @@ final class GetOrderByIdQueryHandler
             throw OrderNotFoundException::withId($query->orderId());
         }
 
+        $order->ensureAccessibleBy($query->customer());
+
         return OrderRead::fromModel($order);
     }
 }

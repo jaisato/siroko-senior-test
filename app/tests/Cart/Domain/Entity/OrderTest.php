@@ -12,8 +12,10 @@ use Siroko\Cart\Domain\Entity\Order;
 use Siroko\Cart\Domain\Entity\Product;
 use Siroko\Cart\Domain\Event\CartCheckedOut;
 use Siroko\Cart\Domain\Exception\InvalidCartStatusException;
+use Siroko\Cart\Domain\Exception\OrderNotFoundException;
 use Siroko\Cart\Domain\ValueObject\CartId;
 use Siroko\Cart\Domain\ValueObject\CartStatus;
+use Siroko\Cart\Domain\ValueObject\CustomerId;
 use Siroko\Cart\Domain\ValueObject\ItemId;
 use Siroko\Cart\Domain\ValueObject\Name;
 use Siroko\Cart\Domain\ValueObject\OrderId;
@@ -80,6 +82,31 @@ final class OrderTest extends TestCase
         Order::place(OrderId::fromString(Uuid::uuid4()->toString()), $cart, self::now());
     }
 
+    /** The order belongs to whoever owned the cart, and hides from everybody else. */
+    public function test_the_order_takes_the_customer_of_the_cart_and_applies_its_access_rule(): void
+    {
+        $alice = CustomerId::fromString('alice');
+        $cart = Cart::open(CartId::fromString(Uuid::uuid4()->toString()), self::now(), new \DateInterval('PT30M'), $alice);
+        $cart->addItem(new CartItem(ItemId::fromString(Uuid::uuid4()->toString()), self::product('Gafas', 'K3', '10.00')));
+        $cart->pay();
+
+        $order = Order::place(OrderId::fromString(Uuid::uuid4()->toString()), $cart, self::now());
+
+        self::assertTrue($alice->equals($order->customerId() ?? CustomerId::fromString('nobody')));
+        self::assertTrue($order->isAccessibleBy($alice));
+        self::assertTrue($order->isAccessibleBy(null), 'no caller, no scoping');
+        self::assertFalse($order->isAccessibleBy(CustomerId::fromString('bob')));
+        self::assertSame('alice', CartCheckedOut::fromOrder($order)->customerId());
+
+        $ownerless = Order::place(OrderId::fromString(Uuid::uuid4()->toString()), self::paidCart([['Gafas', 'K3', '10.00', 1]]), self::now());
+        self::assertNull($ownerless->customerId());
+        self::assertTrue($ownerless->isAccessibleBy(CustomerId::fromString('bob')), 'an ownerless order is open');
+
+        $this->expectException(OrderNotFoundException::class);
+
+        $order->ensureAccessibleBy(CustomerId::fromString('bob'));
+    }
+
     public function test_confirming_is_idempotent(): void
     {
         $order = Order::place(OrderId::fromString(Uuid::uuid4()->toString()), self::paidCart([['Gafas', 'K3', '10.00', 1]]), self::now());
@@ -127,6 +154,7 @@ final class OrderTest extends TestCase
             'cartId' => $order->cartId()->toString(),
             'total' => ['amount' => '259.90', 'currency' => 'EUR'],
             'itemCount' => 2,
+            'customerId' => null,
             'occurredOn' => $order->createdAt()->getTimestamp(),
         ], $event->jsonSerialize());
 
