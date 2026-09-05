@@ -11,6 +11,7 @@ use Siroko\Cart\Domain\Entity\Cart;
 use Siroko\Cart\Domain\Entity\CartItem;
 use Siroko\Cart\Domain\Entity\Product;
 use Siroko\Cart\Domain\Repository\CartRepository;
+use Siroko\Cart\Domain\ValueObject\CartId;
 use Siroko\Cart\Domain\ValueObject\CartStatus;
 use Siroko\Cart\Domain\ValueObject\ItemId;
 use Siroko\Cart\Domain\ValueObject\Name;
@@ -94,9 +95,55 @@ final class DoctrineCartRepositoryTest extends KernelTestCase
         self::assertCount(2, $this->em->getRepository(CartItem::class)->findAll());
     }
 
+    public function test_timestamps_round_trip(): void
+    {
+        $now = new \DateTimeImmutable('2026-09-06 10:00:00', new \DateTimeZone('UTC'));
+        $cart = Cart::open($this->repository->nextIdentity(), $now, new \DateInterval('PT30M'));
+        $this->repository->save($cart);
+
+        $this->em->clear();
+        $reloaded = $this->repository->ofId($cart->id());
+
+        self::assertInstanceOf(Cart::class, $reloaded);
+        self::assertSame('2026-09-06 10:00:00', $reloaded->createdAt()->format('Y-m-d H:i:s'));
+        self::assertSame('2026-09-06 10:30:00', $reloaded->expiresAt()?->format('Y-m-d H:i:s'));
+    }
+
+    /** The sweep's candidates: pending, past their deadline, oldest deadline first, capped. */
+    public function test_expired_pending_ids_lists_lapsed_pending_carts_oldest_first(): void
+    {
+        $now = new \DateTimeImmutable('2026-09-06 10:00:00', new \DateTimeZone('UTC'));
+        $product = $this->product();
+
+        $lapsedLater = $this->cartExpiring($now->modify('-1 minute'), $product);
+        $lapsedEarlier = $this->cartExpiring($now->modify('-1 hour'), $product);
+        $onTheDot = $this->cartExpiring($now, $product);
+        $this->cartExpiring($now->modify('+1 minute'), $product);
+        $this->repository->save(new Cart($this->repository->nextIdentity(), CartStatus::pending()));
+
+        $paid = $this->cartExpiring($now->modify('-1 hour'), $product);
+        $paid->pay();
+        $this->repository->save($paid);
+
+        $ids = array_map(static fn(CartId $id): string => $id->toString(), $this->repository->expiredPendingIds($now, 10));
+
+        self::assertSame([$lapsedEarlier->id()->toString(), $lapsedLater->id()->toString(), $onTheDot->id()->toString()], $ids);
+        self::assertCount(2, $this->repository->expiredPendingIds($now, 2), 'the batch size caps the list');
+        self::assertSame([], $this->repository->expiredPendingIds($now->modify('-2 hours'), 10));
+    }
+
     public function test_an_unknown_cart_is_null(): void
     {
         self::assertNull($this->repository->ofId($this->repository->nextIdentity()));
+    }
+
+    private function cartExpiring(\DateTimeImmutable $deadline, Product $product): Cart
+    {
+        $cart = new Cart($this->repository->nextIdentity(), CartStatus::pending(), $deadline->modify('-30 minutes'), $deadline);
+        $cart->addProduct(ItemId::fromString(Uuid::uuid4()->toString()), $product, new Quantity(1));
+        $this->repository->save($cart);
+
+        return $cart;
     }
 
     private function product(): Product

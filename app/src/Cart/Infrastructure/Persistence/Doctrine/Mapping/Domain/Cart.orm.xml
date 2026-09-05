@@ -11,12 +11,22 @@
             <generator strategy="NONE"/>
         </id>
 
+        <!-- The sweep that releases expired reservations reads by (status, expires_at). -->
+        <indexes>
+            <index name="idx_cart_status_expires" columns="status,expires_at"/>
+        </indexes>
+
         <!-- Fields -->
         <field name="status"
                column="status"
                type="cart_status"
                nullable="false"
         />
+
+        <field name="createdAt" column="created_at" type="datetime_immutable" nullable="false"/>
+
+        <!-- Set while pending; a paid or canceled cart reserves nothing. -->
+        <field name="expiresAt" column="expires_at" type="datetime_immutable" nullable="true"/>
 
         <one-to-many field="items"
                      target-entity="Siroko\Cart\Domain\Entity\CartItem"

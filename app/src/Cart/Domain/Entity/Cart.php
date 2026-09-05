@@ -25,16 +25,65 @@ class Cart
      */
     private Collection $items;
 
+    private \DateTimeImmutable $createdAt;
+
+    /**
+     * When the reservation this cart holds lapses. Set while the cart is
+     * pending; a paid or canceled cart reserves nothing, so it has none.
+     */
+    private ?\DateTimeImmutable $expiresAt;
+
+    /**
+     * `$createdAt` defaults to the wall clock for the benefit of tests and
+     * fixtures; the application opens carts through open(), which takes the
+     * instant from the injected clock.
+     */
     public function __construct(
         private CartId $id,
         private CartStatus $status,
+        ?\DateTimeImmutable $createdAt = null,
+        ?\DateTimeImmutable $expiresAt = null,
     ) {
         $this->items = new ArrayCollection();
+        $this->createdAt = $createdAt ?? new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
+        $this->expiresAt = $expiresAt;
+    }
+
+    /**
+     * A new, pending cart whose reservation lasts `$reservationTtl` from now.
+     *
+     * Units are taken off the shelf the moment a line is added, so a cart that
+     * is never checked out would hold them forever. The deadline is what lets
+     * the release sweep (cart:release-expired) give them back.
+     */
+    public static function open(CartId $id, \DateTimeImmutable $now, \DateInterval $reservationTtl): self
+    {
+        return new self($id, CartStatus::pending(), $now, $now->add($reservationTtl));
     }
 
     public function id(): CartId
     {
         return $this->id;
+    }
+
+    public function createdAt(): \DateTimeImmutable
+    {
+        return $this->createdAt;
+    }
+
+    public function expiresAt(): ?\DateTimeImmutable
+    {
+        return $this->expiresAt;
+    }
+
+    /**
+     * Whether the reservation has lapsed: a pending cart past its deadline.
+     * Checked again under the row lock by the sweep, so a checkout that wins
+     * the race is respected.
+     */
+    public function isExpiredAt(\DateTimeImmutable $now): bool
+    {
+        return $this->status->isPending() && null !== $this->expiresAt && $this->expiresAt <= $now;
     }
 
     public function status(): CartStatus
@@ -234,6 +283,8 @@ class Cart
         }
 
         $this->status = CartStatus::paid();
+        // Paid units are sold, not reserved: there is nothing left to expire.
+        $this->expiresAt = null;
     }
 
     /**
@@ -264,6 +315,7 @@ class Cart
         }
 
         $this->status = CartStatus::canceled();
+        $this->expiresAt = null;
     }
 
     /**

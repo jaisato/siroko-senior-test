@@ -82,6 +82,24 @@ final class PostCartControllerTest extends ApiTestCase
         self::assertSame(5, $this->stockOf($dollars));
     }
 
+    /** The deadline is what the expiry sweep acts on; CART_RESERVATION_TTL is 1800 s in the test env. */
+    public function test_the_created_cart_reserves_its_units_for_the_configured_ttl(): void
+    {
+        $product = $this->persistProduct(stock: 5);
+
+        $this->request('POST', $this->url('api_create_cart'), [
+            'products' => [['productId' => $product->id()->toString(), 'quantity' => 1]],
+        ]);
+
+        self::assertResponseStatusCodeSame(201);
+        $cart = $this->json();
+        $createdAt = new \DateTimeImmutable($cart['createdAt']);
+        $expiresAt = new \DateTimeImmutable($cart['expiresAt']);
+        self::assertEqualsWithDelta(time(), $createdAt->getTimestamp(), 5);
+        self::assertSame(1800, $expiresAt->getTimestamp() - $createdAt->getTimestamp());
+        self::assertStringEndsWith('+00:00', $cart['createdAt'], 'instants are reported in UTC');
+    }
+
     public function test_the_created_cart_carries_its_totals(): void
     {
         $product = $this->persistProduct('Gafas', amount: '129.95', stock: 5);

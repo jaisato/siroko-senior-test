@@ -5,6 +5,8 @@ services:
         # Was `public: public` - a string, which is truthy, so every handler was
         # a public service reachable through the container.
         public: false
+        bind:
+            int $reservationTtlSeconds: '%cart.reservation_ttl_seconds%'
 
     Siroko\Cart\Application\Command\:
         resource: '../../../src/Cart/Application/Command/**'

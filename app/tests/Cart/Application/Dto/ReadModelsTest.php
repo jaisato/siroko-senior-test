@@ -134,6 +134,22 @@ final class ReadModelsTest extends TestCase
         );
     }
 
+    public function test_cart_read_reports_the_timestamps_in_utc(): void
+    {
+        $madrid = new \DateTimeZone('Europe/Madrid');
+        $cart = Cart::open(
+            CartId::fromString(Uuid::uuid4()->toString()),
+            new \DateTimeImmutable('2026-09-06 12:00:00', $madrid),
+            new \DateInterval('PT30M'),
+        );
+
+        $read = CartRead::fromModel($cart);
+
+        self::assertSame('2026-09-06T10:00:00+00:00', $read->createdAt);
+        self::assertSame('2026-09-06T10:30:00+00:00', $read->expiresAt);
+        self::assertNull(CartRead::fromModel(new Cart(CartId::fromString(Uuid::uuid4()->toString()), CartStatus::pending()))->expiresAt);
+    }
+
     public function test_an_empty_cart_reads_as_an_empty_item_list(): void
     {
         $read = CartRead::fromModel(new Cart(CartId::fromString(Uuid::uuid4()->toString()), CartStatus::pending()));

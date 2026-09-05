@@ -23,6 +23,7 @@ use Siroko\Cart\Domain\ValueObject\Price;
 use Siroko\Cart\Domain\ValueObject\ProductCode;
 use Siroko\Cart\Domain\ValueObject\ProductId;
 use Siroko\Cart\Domain\ValueObject\Quantity;
+use Symfony\Component\Clock\MockClock;
 
 /**
  * Reservar el stock de varios productos es tomar varios cerrojos de fila, y el
@@ -181,6 +182,28 @@ final class CreateCartCommandHandlerTest extends TestCase
         );
     }
 
+    /** The reservation deadline is the clock's now plus the configured TTL, never the wall clock. */
+    public function test_a_new_cart_is_dated_by_the_clock_and_expires_after_the_ttl(): void
+    {
+        $product = $this->product('11111111-1111-4111-8111-111111111111');
+
+        $handler = $this->handler(clock: new MockClock('2026-09-06 10:00:00', 'UTC'), ttlSeconds: 900);
+
+        $read = $handler(new CreateCartCommand([
+            ['productId' => $product->id()->toString(), 'quantity' => 1],
+        ]));
+
+        self::assertSame('2026-09-06T10:00:00+00:00', $read->createdAt);
+        self::assertSame('2026-09-06T10:15:00+00:00', $read->expiresAt);
+    }
+
+    public function test_a_ttl_below_one_second_is_a_configuration_error(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+
+        $this->handler(ttlSeconds: 0);
+    }
+
     public function test_an_unknown_product_is_not_found_and_not_a_fatal(): void
     {
         $handler = $this->handler();
@@ -223,7 +246,7 @@ final class CreateCartCommandHandlerTest extends TestCase
     /**
      * @param array<string, int>|null $units unidades reservadas por producto
      */
-    private function handler(?array &$units = null, bool $available = true): CreateCartCommandHandler
+    private function handler(?array &$units = null, bool $available = true, ?MockClock $clock = null, int $ttlSeconds = 1800): CreateCartCommandHandler
     {
         $carts = $this->createStub(CartRepository::class);
         $carts->method('nextIdentity')->willReturnCallback(
@@ -258,6 +281,6 @@ final class CreateCartCommandHandlerTest extends TestCase
             },
         );
 
-        return new CreateCartCommandHandler($carts, $items, $products, $this->session);
+        return new CreateCartCommandHandler($carts, $items, $products, $this->session, $clock ?? new MockClock(), $ttlSeconds);
     }
 }
