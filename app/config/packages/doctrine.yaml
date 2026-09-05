@@ -45,6 +45,13 @@ doctrine:
                 dir: '%kernel.project_dir%/src/Cart/Infrastructure/Persistence/Doctrine/Mapping/ValueObject'
                 prefix: 'Siroko\Cart\Domain\ValueObject'
                 alias: CartValueObject
+            # Tables that belong to the HTTP adapter, not to the domain (Idempotency-Key records).
+            CartApiIdempotency:
+                type: xml
+                is_bundle: false
+                dir: '%kernel.project_dir%/src/Cart/Infrastructure/Persistence/Doctrine/Mapping/Infrastructure'
+                prefix: 'Siroko\Cart\Infrastructure\Api\Idempotency'
+                alias: CartApiIdempotency
         controller_resolver:
             auto_mapping: false
 

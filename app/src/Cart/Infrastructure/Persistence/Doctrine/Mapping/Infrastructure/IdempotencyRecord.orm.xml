@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<doctrine-mapping xmlns="http://doctrine-project.org/schemas/orm/doctrine-mapping"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                  xsi:schemaLocation="http://doctrine-project.org/schemas/orm/doctrine-mapping
+                                      http://doctrine-project.org/schemas/orm/doctrine-mapping.xsd">
+
+    <!-- Responses remembered for Idempotency-Key replays; see IdempotencyGuard. -->
+    <entity name="Siroko\Cart\Infrastructure\Api\Idempotency\IdempotencyRecord"
+            table="idempotency_key">
+
+        <!-- The purge deletes by deadline. -->
+        <indexes>
+            <index name="idx_idempotency_expires" columns="expires_at"/>
+        </indexes>
+
+        <!-- sha256 of (scope, key): fixed length whatever the client sends. -->
+        <id name="id" type="string" column="id" length="64">
+            <options>
+                <option name="fixed">true</option>
+            </options>
+            <generator strategy="NONE"/>
+        </id>
+
+        <!-- The customer the key belongs to; '' when the API runs unauthenticated. -->
+        <field name="scope" column="scope" type="string" length="64" nullable="false"/>
+
+        <field name="requestKey" column="request_key" type="string" length="255" nullable="false"/>
+
+        <!-- sha256 of method, path and body. -->
+        <field name="fingerprint" column="fingerprint" type="string" length="64" nullable="false">
+            <options>
+                <option name="fixed">true</option>
+            </options>
+        </field>
+
+        <field name="responseStatus" column="response_status" type="smallint" nullable="false"/>
+
+        <field name="responseContentType" column="response_content_type" type="string" length="100" nullable="false"/>
+
+        <field name="responseBody" column="response_body" type="text" nullable="false"/>
+
+        <field name="createdAt" column="created_at" type="datetime_immutable" nullable="false"/>
+
+        <field name="expiresAt" column="expires_at" type="datetime_immutable" nullable="false"/>
+    </entity>
+</doctrine-mapping>

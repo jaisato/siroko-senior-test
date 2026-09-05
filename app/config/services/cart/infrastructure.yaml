@@ -50,6 +50,13 @@ services:
 
     Siroko\Cart\Infrastructure\Api\Security\CurrentCustomer: ~
 
+    # Idempotency-Key support for the cart writes.
+    Siroko\Cart\Infrastructure\Api\Idempotency\DoctrineIdempotencyStore: ~
+    Siroko\Cart\Infrastructure\Api\Idempotency\IdempotencyStore: '@Siroko\Cart\Infrastructure\Api\Idempotency\DoctrineIdempotencyStore'
+    Siroko\Cart\Infrastructure\Api\Idempotency\IdempotencyGuard:
+        arguments:
+            $idempotencyTtlSeconds: '%api.idempotency_ttl_seconds%'
+
     # Maps an exception onto the API's error response. Registered next to the
     # controllers that inject it; there is no broad App\ glob in this project,
     # so a class under src/ is not a service until it is named here.

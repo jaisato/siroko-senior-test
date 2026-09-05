@@ -81,6 +81,15 @@ use Symfony\Component\Routing\Requirement\Requirement;
             output: CartRead::class,
             openapi: new Model\Operation(
                 summary: 'Create cart',
+                parameters: [
+                    new Model\Parameter(
+                        name: 'Idempotency-Key',
+                        in: 'header',
+                        required: false,
+                        description: 'Optional. A retry with the same key and body replays the original response (marked Idempotent-Replayed: true) instead of executing again; the same key with a different request answers 422. Keys expire after IDEMPOTENCY_TTL seconds.',
+                        schema: ['type' => 'string', 'minLength' => 1, 'maxLength' => 255],
+                    ),
+                ],
                 requestBody: new Model\RequestBody(
                     description: 'JSON payload',
                     required: true,
@@ -213,6 +222,13 @@ use Symfony\Component\Routing\Requirement\Requirement;
                 description: 'Pays a pending, non-empty cart and places an order for it. Answers the paid cart together with the order (`order.id` is what to keep). The cart becomes read-only; `PUT .../deliver` and `DELETE` are the only writes left.',
                 parameters: [
                     new Model\Parameter(
+                        name: 'Idempotency-Key',
+                        in: 'header',
+                        required: false,
+                        description: 'Optional. A retry with the same key and body replays the original response (marked Idempotent-Replayed: true) instead of executing again; the same key with a different request answers 422. Keys expire after IDEMPOTENCY_TTL seconds.',
+                        schema: ['type' => 'string', 'minLength' => 1, 'maxLength' => 255],
+                    ),
+                    new Model\Parameter(
                         name: 'id',
                         in: 'path',
                         required: true,
@@ -281,6 +297,13 @@ use Symfony\Component\Routing\Requirement\Requirement;
             openapi: new Model\Operation(
                 summary: 'Add units of a product to a cart',
                 parameters: [
+                    new Model\Parameter(
+                        name: 'Idempotency-Key',
+                        in: 'header',
+                        required: false,
+                        description: 'Optional. A retry with the same key and body replays the original response (marked Idempotent-Replayed: true) instead of executing again; the same key with a different request answers 422. Keys expire after IDEMPOTENCY_TTL seconds.',
+                        schema: ['type' => 'string', 'minLength' => 1, 'maxLength' => 255],
+                    ),
                     new Model\Parameter(
                         name: 'cartId',
                         in: 'path',
