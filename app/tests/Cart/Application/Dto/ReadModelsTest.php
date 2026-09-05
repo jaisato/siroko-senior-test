@@ -84,9 +84,12 @@ final class ReadModelsTest extends TestCase
         $read = CartItemRead::fromModel($item);
 
         self::assertSame($item->id()->toString(), $read->id);
+        self::assertSame($item->getProduct()->id()->toString(), $read->productId);
         self::assertSame('Gafas', $read->name);
         self::assertSame('K3', $read->code);
         self::assertSame("129,95\u{a0}€", $read->price);
+        self::assertSame(1, $read->quantity);
+        self::assertSame(3, CartItemRead::fromModel(new CartItem(ItemId::fromString(Uuid::uuid4()->toString()), self::product(), new Quantity(3)))->quantity);
     }
 
     public function test_cart_read_keys_the_lines_by_item_id(): void

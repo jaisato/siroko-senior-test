@@ -6,10 +6,10 @@ namespace Siroko\Cart\Application\Command\Cart;
 
 use Siroko\Cart\Application\Dto\Cart\CartRead;
 use Siroko\Cart\Domain\Entity\Cart;
-use Siroko\Cart\Domain\Entity\CartItem;
 use Siroko\Cart\Domain\Entity\Product;
 use Siroko\Cart\Domain\Exception\CartNotFoundException;
 use Siroko\Cart\Domain\Exception\InvalidCartStatusException;
+use Siroko\Cart\Domain\Exception\InvalidQuantityException;
 use Siroko\Cart\Domain\Exception\OutOfStockException;
 use Siroko\Cart\Domain\Exception\ProductNotFoundException;
 use Siroko\Cart\Domain\Repository\CartItemRepository;
@@ -31,6 +31,7 @@ final class AddCartProductCommandHandler
      * @throws CartNotFoundException
      * @throws InvalidCartStatusException when the cart is no longer pending
      * @throws OutOfStockException
+     * @throws InvalidQuantityException   when the line would exceed what one line holds
      */
     public function __invoke(AddCartProductCommand $command): CartRead
     {
@@ -65,7 +66,7 @@ final class AddCartProductCommandHandler
             // request destroyed one unit of inventory. Same 409 as checkout.
             $cart->ensurePending();
 
-            $this->addProduct($cart, $product);
+            $this->addProduct($cart, $product, $command);
 
             return $cart;
         });
@@ -87,20 +88,20 @@ final class AddCartProductCommandHandler
      * interna, presentada como petición mal formada, para una petición que
      * estaba bien-.
      *
+     * The units land on the line the cart already has for the product, or on a
+     * new one; either way the cart holds one line per product. If the line
+     * would grow past what one line holds, the domain refuses and the
+     * transaction - reservation included - rolls back.
+     *
      * Se llama con el carrito ya bloqueado.
      */
-    private function addProduct(Cart $cart, Product $product): void
+    private function addProduct(Cart $cart, Product $product, AddCartProductCommand $command): void
     {
-        if (!$this->productRepository->reserveStock($product->id(), 1)) {
+        if (!$this->productRepository->reserveStock($product->id(), $command->units())) {
             throw new OutOfStockException('Product is out of stock');
         }
 
-        $cart->addItem(
-            new CartItem(
-                $this->cartItemRepository->nextIdentity(),
-                $product,
-            ),
-        );
+        $cart->addProduct($this->cartItemRepository->nextIdentity(), $product, $command->quantity());
 
         $this->cartRepository->save($cart);
     }

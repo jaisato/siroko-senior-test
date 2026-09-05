@@ -28,17 +28,41 @@ final class PostCartControllerTest extends ApiTestCase
 
         self::assertTrue(Uuid::isValid($cart['id']));
         self::assertSame(CartStatus::PENDING, $cart['status']);
-        self::assertCount(3, $cart['items'], 'one line per unit');
+        self::assertCount(2, $cart['items'], 'one line per product, holding its units');
 
+        $quantities = [];
         foreach ($cart['items'] as $item) {
             self::assertArrayHasKey('id', $item);
             self::assertArrayHasKey('name', $item);
             self::assertArrayHasKey('code', $item);
             self::assertArrayHasKey('price', $item);
+            $quantities[$item['productId']] = $item['quantity'];
         }
 
+        // Lines are created in product-id (lock) order, not request order.
+        ksort($quantities);
+        $expected = [$first->id()->toString() => 2, $second->id()->toString() => 1];
+        ksort($expected);
+        self::assertSame($expected, $quantities);
         self::assertSame(3, $this->stockOf($first), 'two units were reserved');
         self::assertSame(4, $this->stockOf($second));
+    }
+
+    public function test_lines_naming_the_same_product_become_one_line(): void
+    {
+        $product = $this->persistProduct(stock: 5);
+
+        $this->request('POST', $this->url('api_create_cart'), [
+            'products' => [
+                ['productId' => $product->id()->toString(), 'quantity' => 2],
+                ['productId' => $product->id()->toString(), 'quantity' => 1],
+            ],
+        ]);
+
+        self::assertResponseStatusCodeSame(201);
+        self::assertCount(1, $this->json()['items']);
+        self::assertSame(3, array_values($this->json()['items'])[0]['quantity']);
+        self::assertSame(2, $this->stockOf($product));
     }
 
     public function test_an_empty_body_is_a_400_problem(): void

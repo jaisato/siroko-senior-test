@@ -9,6 +9,7 @@ use Ramsey\Uuid\Uuid;
 use Siroko\Cart\Application\Command\Cart\CreateCartCommand;
 use Siroko\Cart\Application\Command\Cart\CreateCartCommandHandler;
 use Siroko\Cart\Domain\Entity\Product;
+use Siroko\Cart\Domain\Exception\InvalidQuantityException;
 use Siroko\Cart\Domain\Exception\OutOfStockException;
 use Siroko\Cart\Domain\Exception\ProductNotFoundException;
 use Siroko\Cart\Domain\Repository\CartItemRepository;
@@ -45,11 +46,16 @@ final class CreateCartCommandHandlerTest extends TestCase
         $this->session = new RecordingSession();
     }
 
-    public function test_a_cart_is_created_pending_with_one_line_per_unit(): void
+    /**
+     * Three units used to be three rows with three ids; a line now holds its
+     * units, so the cart has one line per product.
+     */
+    public function test_a_cart_is_created_pending_with_one_line_per_product_holding_its_units(): void
     {
         $product = $this->product('11111111-1111-4111-8111-111111111111');
 
-        $handler = $this->handler();
+        $units = [];
+        $handler = $this->handler($units);
 
         $read = $handler(new CreateCartCommand([
             ['productId' => $product->id()->toString(), 'quantity' => 3],
@@ -57,8 +63,45 @@ final class CreateCartCommandHandlerTest extends TestCase
 
         self::assertTrue(Uuid::isValid($read->id));
         self::assertSame(CartStatus::PENDING, $read->status);
-        self::assertCount(3, $read->items);
+        self::assertCount(1, $read->items);
+        self::assertSame(3, array_values($read->items)[0]->quantity);
+        self::assertSame([$product->id()->toString() => 3], $units, 'all three units were reserved at once');
         self::assertSame(['begin', 'saveCart', 'commit'], $this->session->log, 'reservations and the cart share one transaction');
+    }
+
+    /** A request naming the same product twice ends up with one line for it. */
+    public function test_lines_naming_the_same_product_fold_into_one(): void
+    {
+        $product = $this->product('11111111-1111-4111-8111-111111111111');
+
+        $handler = $this->handler();
+
+        $read = $handler(new CreateCartCommand([
+            ['productId' => $product->id()->toString(), 'quantity' => 2],
+            ['productId' => $product->id()->toString(), 'quantity' => 3],
+        ]));
+
+        self::assertCount(1, $read->items);
+        self::assertSame(5, array_values($read->items)[0]->quantity);
+        self::assertSame([$product->id()->toString(), $product->id()->toString()], $this->reserved, 'each line reserved its own units');
+    }
+
+    /**
+     * The per-line cap applies to the merged line. The reservation has been
+     * made by then; in production the transaction rolls it back.
+     */
+    public function test_lines_of_one_product_adding_up_to_more_than_a_line_holds_are_refused(): void
+    {
+        $product = $this->product('11111111-1111-4111-8111-111111111111');
+
+        $handler = $this->handler();
+
+        $this->expectException(InvalidQuantityException::class);
+
+        $handler(new CreateCartCommand([
+            ['productId' => $product->id()->toString(), 'quantity' => CreateCartCommand::MAX_ORDERED_QUANTITY],
+            ['productId' => $product->id()->toString(), 'quantity' => 1],
+        ]));
     }
 
     /**
