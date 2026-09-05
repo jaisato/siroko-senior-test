@@ -17,12 +17,9 @@ FROM composer:2 AS composer_bin
 FROM php:${PHP_VERSION}-fpm-bookworm AS base
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        git unzip libicu-dev libzip-dev librabbitmq-dev pkg-config \
- && pecl install amqp \
- && docker-php-ext-enable amqp \
+        git unzip libicu-dev libzip-dev \
  && docker-php-ext-install -j"$(nproc)" intl zip pdo_mysql opcache \
- && apt-get purge -y --auto-remove pkg-config \
- && rm -rf /var/lib/apt/lists/* /tmp/pear
+ && rm -rf /var/lib/apt/lists/*
 
 # Production php.ini as the baseline for every target; dev adds its overrides.
 RUN mv "$PHP_INI_DIR/php.ini-production" "$PHP_INI_DIR/php.ini"

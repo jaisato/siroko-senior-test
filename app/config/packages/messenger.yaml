@@ -5,17 +5,18 @@ framework:
         failure_transport: failed
 
         transports:
+            # Domain events travel through the application's own database
+            # (symfony/doctrine-messenger, table `messenger_messages`). The
+            # table is created by a migration rather than on first use
+            # (auto_setup: false), so the worker never needs DDL rights and the
+            # schema is what the migrations say it is. RabbitMQ used to play
+            # this part; a broker was a second stateful service to run, monitor
+            # and back up for a queue the database handles at this volume.
             async:
                 dsn: '%env(MESSENGER_TRANSPORT_DSN)%'
                 options:
-                    exchange:
-                        name: messages
-                        type: direct
-                        durable: true
-                    queues:
-                        messages:
-                            binding_keys: [messages]
-                            durable: true
+                    queue_name: async
+                    auto_setup: false
                 retry_strategy:
                     max_retries: 3
                     delay: 1000
@@ -25,17 +26,11 @@ framework:
             failed:
                 dsn: '%env(MESSENGER_TRANSPORT_DSN)%'
                 options:
-                    exchange:
-                        name: failed
-                        type: direct
-                        durable: true
-                    queues:
-                        failed:
-                            binding_keys: [failed]
-                            durable: true
+                    queue_name: failed
+                    auto_setup: false
 
         routing:
-            # Every domain event goes to the broker; DomainEventConsumer picks
+            # Every domain event goes to the queue; DomainEventConsumer picks
             # them up from the worker (see the `worker` compose service).
             'Siroko\Cart\Domain\Event\DomainEvent': async
 
@@ -43,7 +38,7 @@ when@test:
     framework:
         messenger:
             transports:
-                # No broker in the test environment: dispatched messages stay in
-                # memory, where a test can assert on them.
+                # No queue in the test environment: dispatched messages stay in
+                # memory, where a test can assert on them and consume them.
                 async: 'in-memory://'
                 failed: 'in-memory://'
