@@ -5,14 +5,18 @@ api_platform:
     enable_docs: true
     mapping:
         paths:
-            - '%kernel.project_dir%/src/Cart/Infrastructure/Api/Dto'
+            # Routing + OpenAPI metadata only; the read models live in Application.
+            - '%kernel.project_dir%/src/Cart/Infrastructure/Api/Resource'
     patch_formats:
         json: [ 'application/merge-patch+json' ]
     formats:
         json: [ 'application/json' ]
         html: [ 'text/html' ]
+    # Errors raised outside our controllers (unknown route, wrong method,
+    # unacceptable format) use the same RFC 7807 media type as the ones the
+    # controllers map themselves, so there is one error contract for the API.
     error_formats:
-        json: [ 'application/json' ]
+        jsonproblem: [ 'application/problem+json' ]
     defaults:
         stateless: true
         cache_headers:

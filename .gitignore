@@ -1,3 +1,9 @@
+# Root compose configuration is per machine; commit .env.example instead.
+/.env
 
-# PHPUnit writes this on every run; it is per-machine state, not source.
+# PHPUnit writes these on every run; they are per-machine state, not source.
 /app/.phpunit.result.cache
+/app/.phpunit.cache/
+
+# Local SQLite databases (the test profile writes app/var/test.db).
+*.db

@@ -1,29 +1,34 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Siroko\Cart\Infrastructure\Api\Controller\Product;
 
 use Siroko\Cart\Application\Query\Product\GetProductByIdQuery;
 use Siroko\Cart\Domain\CommandBus\CommandBusRead;
-use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
-use Symfony\Component\Routing\Annotation\Route;
+use Siroko\Cart\Infrastructure\Api\ApiExceptionMapper;
 use Symfony\Component\HttpFoundation\JsonResponse;
 
-class GetProductByIdController extends AbstractController
+/**
+ * GET /v1/products/{id} - routed by ProductResource.
+ */
+final class GetProductByIdController
 {
-    /**
-     * @param CommandBusRead $commandBusRead
-     */
-    public function __construct(private readonly CommandBusRead $commandBusRead)
-    {
-    }
+    public function __construct(
+        private readonly CommandBusRead $commandBusRead,
+        private readonly ApiExceptionMapper $errors,
+    ) {}
 
-    #[Route('/v1/products/{id}', methods: ['GET'])]
     public function __invoke(string $id): JsonResponse
     {
-        $product = $this->commandBusRead->handle(
-            new GetProductByIdQuery($id)
-        );
+        try {
+            $product = $this->commandBusRead->handle(
+                new GetProductByIdQuery($id),
+            );
 
-        return new JsonResponse($product);
+            return new JsonResponse($product);
+        } catch (\Throwable $e) {
+            return $this->errors->toResponse($e);
+        }
     }
 }

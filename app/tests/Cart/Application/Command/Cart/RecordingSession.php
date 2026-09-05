@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Siroko\Tests\Cart\Application\Command\Cart;
 
 use Siroko\Cart\Domain\Transaction\TransactionalSession;
@@ -23,7 +25,7 @@ final class RecordingSession implements TransactionalSession
 
     public function executeAtomically(callable $operation): mixed
     {
-        $this->transactions++;
+        ++$this->transactions;
         $this->log[] = 'begin';
 
         $result = $operation();

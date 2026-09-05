@@ -1,10 +1,12 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Siroko\Cart\Domain\ValueObject;
 
 use Siroko\Cart\Domain\Exception\InvalidCartStatusException;
 
-final class CartStatus
+final class CartStatus implements \Stringable
 {
     public const PENDING = 1;
 
@@ -14,54 +16,47 @@ final class CartStatus
 
     public const CANCELED = 4;
 
-    /**
-     * @var int
-     */
-    private int $value;
+    private const ALL = [self::PENDING, self::PAID, self::DELIVERED, self::CANCELED];
+
+    private readonly int $value;
 
     /**
-     * @param int $status
      * @throws InvalidCartStatusException
      */
     public function __construct(int $status)
     {
-        $this->setStatus($status);
-    }
+        if (!\in_array($status, self::ALL, true)) {
+            throw new InvalidCartStatusException(\sprintf('Cart status is invalid: %d', $status));
+        }
 
-    /**
-     * @param int $status
-     * @return void
-     * @throws InvalidCartStatusException
-     */
-    private function setStatus(int $status): void
-    {
-        $this->checkIsValidStatus($status);
         $this->value = $status;
     }
 
-    /**
-     * @param int $status
-     * @return void
-     * @throws InvalidCartStatusException
-     */
-    private function checkIsValidStatus(int $status): void
+    public static function pending(): self
     {
-        if (!in_array($status, [self::PENDING, self::PAID, self::DELIVERED, self::CANCELED], true)) {
-            throw new InvalidCartStatusException("Cart status is invalid: {$status}");
-        }
+        return new self(self::PENDING);
     }
 
-    /**
-     * @return int
-     */
+    public static function paid(): self
+    {
+        return new self(self::PAID);
+    }
+
+    public function isPending(): bool
+    {
+        return self::PENDING === $this->value;
+    }
+
+    public function equals(self $other): bool
+    {
+        return $this->value === $other->value;
+    }
+
     public function toInt(): int
     {
         return $this->value;
     }
 
-    /**
-     * @return string
-     */
     public function __toString(): string
     {
         return (string) $this->value;

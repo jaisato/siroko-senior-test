@@ -1,37 +1,50 @@
 <?php
+
 declare(strict_types=1);
 
 namespace Siroko\Cart\Infrastructure\CommandBus\Middleware;
 
+use League\Tactician\Middleware;
 use Siroko\Cart\Domain\Event\DomainEvent;
 use Siroko\Cart\Domain\Event\DomainEventPublisher;
 use Siroko\Cart\Domain\Event\Subscriber\InMemoryAllSubscriber;
 use Siroko\Cart\Domain\Queue\MessageDispatcher;
-use League\Tactician\Middleware;
 
-use function array_map;
-
+/**
+ * Collects the domain events raised while a command runs and hands them to
+ * the message dispatcher once the handler has returned.
+ *
+ * The collector is unsubscribed whether the handler succeeds or throws. The
+ * publisher is a process-wide singleton, and the previous version subscribed
+ * a new collector per command without ever removing it: in a long-running
+ * worker every command left one more collector behind, each of them receiving
+ * every later event, so memory grew without bound and an event raised by the
+ * N-th command was also recorded by the N-1 stale collectors.
+ */
 final class DomainEventMiddleware implements Middleware
 {
-    private MessageDispatcher $messageDispatcher;
-
-    public function __construct(MessageDispatcher $messageDispatcher)
-    {
-        $this->messageDispatcher = $messageDispatcher;
-    }
+    public function __construct(
+        private readonly MessageDispatcher $messageDispatcher,
+        private readonly DomainEventPublisher $publisher,
+    ) {}
 
     /**
-     * @inheritDoc
+     * @param object $command
      */
-    public function execute($command, callable $next)
+    public function execute($command, callable $next): mixed
     {
-        $domainEventPublisher = DomainEventPublisher::instance();
-        $domainEventsCollector = new InMemoryAllSubscriber();
-        $domainEventPublisher->subscribe($domainEventsCollector);
+        $collector = new InMemoryAllSubscriber();
+        $subscription = $this->publisher->subscribe($collector);
 
-        $returnValue = $next($command);
+        try {
+            $returnValue = $next($command);
+        } finally {
+            $this->publisher->unsubscribe($subscription);
+        }
 
-        $this->dispatchEvents($domainEventsCollector->events());
+        // Events are only published for a command that completed; a handler
+        // that threw has been rolled back and its events describe nothing.
+        $this->dispatchEvents($collector->events());
 
         return $returnValue;
     }
@@ -41,11 +54,8 @@ final class DomainEventMiddleware implements Middleware
      */
     private function dispatchEvents(array $events): void
     {
-        array_map(
-            function (DomainEvent $event): void {
-                $this->messageDispatcher->dispatch($event);
-            },
-            $events
-        );
+        foreach ($events as $event) {
+            $this->messageDispatcher->dispatch($event);
+        }
     }
 }

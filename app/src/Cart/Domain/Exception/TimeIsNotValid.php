@@ -1,33 +1,33 @@
 <?php
 
-namespace Siroko\Cart\Domain\Exception;
+declare(strict_types=1);
 
-use function sprintf;
+namespace Siroko\Cart\Domain\Exception;
 
 final class TimeIsNotValid extends \Exception
 {
     public static function becauseHourMinutesAndSecondsCombinationIsNotValid(
         int $hour,
         int $minutes,
-        int $seconds
+        int $seconds,
     ): self {
         return new self(
-            sprintf(
+            \sprintf(
                 'Combination of hour "%s", minutes"%s" and seconds "%s" is not valid',
                 $hour,
                 $minutes,
-                $seconds
-            )
+                $seconds,
+            ),
         );
     }
 
     public static function becauseTimeStringDoesNotHaveAValidFormat(string $timeString): self
     {
         return new self(
-            sprintf(
+            \sprintf(
                 'String "%s" does not have a valid format',
-                $timeString
-            )
+                $timeString,
+            ),
         );
     }
 }

@@ -1,10 +1,10 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Siroko\Cart\Domain\Event;
 
-use JsonSerializable;
-
-interface DomainEvent extends JsonSerializable
+interface DomainEvent extends \JsonSerializable
 {
     public function ocurredOn(): int;
 

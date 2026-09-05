@@ -2,7 +2,9 @@ services:
     _defaults:
         autowire: true
         autoconfigure: true
-        public: public
+        # Was `public: public` - a string, which is truthy, so every handler was
+        # a public service reachable through the container.
+        public: false
 
     Siroko\Cart\Application\Command\:
         resource: '../../../src/Cart/Application/Command/**'

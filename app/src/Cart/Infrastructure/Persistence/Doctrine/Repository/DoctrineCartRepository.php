@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Siroko\Cart\Infrastructure\Persistence\Doctrine\Repository;
 
 use Doctrine\DBAL\LockMode;
@@ -11,89 +13,74 @@ use Siroko\Cart\Domain\Repository\CartRepository;
 use Siroko\Cart\Domain\ValueObject\CartId;
 use Siroko\Cart\Domain\ValueObject\ItemId;
 use Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\CartIdType;
+use Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\ItemIdType;
 
-class DoctrineCartRepository implements CartRepository
+final class DoctrineCartRepository implements CartRepository
 {
-    /**
-     * @param EntityManagerInterface $em
-     */
     public function __construct(
-        private EntityManagerInterface $em
-    ) {
-    }
+        private readonly EntityManagerInterface $em,
+    ) {}
 
-    /**
-     * @return CartId
-     */
     public function nextIdentity(): CartId
     {
         return CartId::fromString(Uuid::uuid7()->toString());
     }
 
-    /**
-     * @param Cart $cart
-     * @return void
-     */
     public function save(Cart $cart): void
     {
         $this->em->persist($cart);
         $this->em->flush();
     }
 
-    /**
-     * @param CartId $id
-     * @return Cart|null
-     */
     public function ofId(CartId $id): ?Cart
     {
-        // return $this->em->find(Product::class, $id);
-
-        $qb = $this->em->createQueryBuilder();
-
-        $qb->select('c')
+        $cart = $this->em->createQueryBuilder()
+            ->select('c')
             ->from(Cart::class, 'c')
             ->where('c.id = :id')
-            ->setParameter('id', $id, CartIdType::NAME);
+            ->setParameter('id', $id, CartIdType::NAME)
+            ->getQuery()
+            ->getOneOrNullResult();
 
-        return $qb->getQuery()->getOneOrNullResult();
+        return $cart instanceof Cart ? $cart : null;
     }
 
     public function ofIdForUpdate(CartId $id): ?Cart
     {
-        $qb = $this->em->createQueryBuilder();
-
-        $qb->select('c')
+        $cart = $this->em->createQueryBuilder()
+            ->select('c')
             ->from(Cart::class, 'c')
             ->where('c.id = :id')
-            ->setParameter('id', $id, CartIdType::NAME);
-
-        return $qb->getQuery()
+            ->setParameter('id', $id, CartIdType::NAME)
+            ->getQuery()
             ->setLockMode(LockMode::PESSIMISTIC_WRITE)
             ->getOneOrNullResult();
+
+        return $cart instanceof Cart ? $cart : null;
     }
 
     /**
-     * @param CartId $cartId
-     * @param ItemId $itemId
-     * @return void
-     * @throws \Doctrine\ORM\Exception\ORMException
+     * Removes the line from the cart it belongs to; a line of another cart is
+     * left alone. The handler has already checked ownership under a row lock,
+     * so the `cart` condition here is the last line of defence, not the first.
      */
     public function removeItem(CartId $cartId, ItemId $itemId): void
     {
-        $cartRef = $this->em->getReference(Cart::class, $cartId);
+        $item = $this->em->createQueryBuilder()
+            ->select('i')
+            ->from(CartItem::class, 'i')
+            ->where('i.id = :id')
+            ->andWhere('i.cart = :cart')
+            ->setParameter('id', $itemId, ItemIdType::NAME)
+            ->setParameter('cart', $cartId, CartIdType::NAME)
+            ->getQuery()
+            ->getOneOrNullResult();
 
-        $item = $this->em->getRepository(CartItem::class)->findOneBy([
-            'id'   => $itemId,
-            'cart' => $cartRef,
-        ]);
-
-        if (!$item) {
+        if (!$item instanceof CartItem) {
             return;
         }
 
-        if (method_exists($cartRef, 'removeItem')) {
-            $cartRef->removeItem($item);
-        }
+        $item->getCart()->removeItem($item);
 
         $this->em->remove($item);
         $this->em->flush();

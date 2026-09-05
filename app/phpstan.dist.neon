@@ -1,0 +1,24 @@
+includes:
+    - vendor/phpstan/phpstan-symfony/extension.neon
+    - vendor/phpstan/phpstan-symfony/rules.neon
+    - vendor/phpstan/phpstan-doctrine/extension.neon
+    - vendor/phpstan/phpstan-doctrine/rules.neon
+    - vendor/phpstan/phpstan-phpunit/extension.neon
+    - vendor/phpstan/phpstan-phpunit/rules.neon
+
+parameters:
+    level: 8
+    paths:
+        - src
+        - tests
+    excludePaths:
+        # MySQL DDL kept verbatim from doctrine:migrations:diff.
+        - src/Cart/Infrastructure/Persistence/Doctrine/Migrations
+    tmpDir: var/cache/phpstan
+    symfony:
+        # Dumped by `bin/console cache:warmup --env=dev` (debug kernels write it).
+        # The extension refuses to run without it, which is why `composer stan`
+        # warms the cache first.
+        containerXmlPath: var/cache/dev/Siroko_KernelDevDebugContainer.xml
+    doctrine:
+        objectManagerLoader: tests/object-manager.php

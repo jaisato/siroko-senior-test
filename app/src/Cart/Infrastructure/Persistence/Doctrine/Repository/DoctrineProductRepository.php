@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Siroko\Cart\Infrastructure\Persistence\Doctrine\Repository;
 
 use Doctrine\DBAL\ParameterType;
@@ -7,35 +9,39 @@ use Doctrine\ORM\EntityManagerInterface;
 use Ramsey\Uuid\Uuid;
 use Siroko\Cart\Domain\Entity\Product;
 use Siroko\Cart\Domain\Repository\ProductRepository;
+use Siroko\Cart\Domain\ValueObject\ProductCode;
 use Siroko\Cart\Domain\ValueObject\ProductId;
+use Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\ProductCodeType;
 use Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\ProductIdType;
 
-class DoctrineProductRepository implements ProductRepository
+final class DoctrineProductRepository implements ProductRepository
 {
-    /**
-     * @param EntityManagerInterface $em
-     */
     public function __construct(
-        private EntityManagerInterface $em
-    ) {
-    }
+        private readonly EntityManagerInterface $em,
+    ) {}
 
-    /**
-     * @return ProductId
-     */
     public function nextIdentity(): ProductId
     {
         return ProductId::fromString(Uuid::uuid7()->toString());
     }
 
-    /**
-     * @param Product $product
-     * @return void
-     */
     public function save(Product $product): void
     {
         $this->em->persist($product);
         $this->em->flush();
+    }
+
+    public function existsWithCode(ProductCode $code): bool
+    {
+        $count = $this->em->createQueryBuilder()
+            ->select('COUNT(p.id)')
+            ->from(Product::class, 'p')
+            ->where('p.code = :code')
+            ->setParameter('code', $code, ProductCodeType::NAME)
+            ->getQuery()
+            ->getSingleScalarResult();
+
+        return (int) $count > 0;
     }
 
     /**
@@ -55,8 +61,10 @@ class DoctrineProductRepository implements ProductRepository
         $this->em->getConnection()->executeStatement(
             'UPDATE product SET quantity = quantity + :units WHERE id = :id',
             ['units' => $units, 'id' => $id],
-            ['units' => ParameterType::INTEGER, 'id' => ProductIdType::NAME]
+            ['units' => ParameterType::INTEGER, 'id' => ProductIdType::NAME],
         );
+
+        $this->refreshIfManaged($id);
     }
 
     /**
@@ -71,10 +79,32 @@ class DoctrineProductRepository implements ProductRepository
         $affected = $this->em->getConnection()->executeStatement(
             'UPDATE product SET quantity = quantity - :units WHERE id = :id AND quantity >= :units',
             ['units' => $units, 'id' => $id],
-            ['units' => ParameterType::INTEGER, 'id' => ProductIdType::NAME]
+            ['units' => ParameterType::INTEGER, 'id' => ProductIdType::NAME],
         );
 
-        return $affected === 1;
+        if (1 !== $affected) {
+            return false;
+        }
+
+        $this->refreshIfManaged($id);
+
+        return true;
+    }
+
+    /**
+     * The raw UPDATE bypasses the unit of work, so a Product already loaded in
+     * this request kept its old quantity in memory. Nothing wrote that stale
+     * value back - Doctrine only flushes what changed in PHP - but anything
+     * that read the entity after the movement saw stock that was no longer
+     * there. Reloading the managed instance keeps the object truthful.
+     */
+    private function refreshIfManaged(ProductId $id): void
+    {
+        $product = $this->em->getUnitOfWork()->tryGetById(['id' => $id], Product::class);
+
+        if ($product instanceof Product) {
+            $this->em->refresh($product);
+        }
     }
 
     /**
@@ -91,49 +121,54 @@ class DoctrineProductRepository implements ProductRepository
     private function guardUnits(int $units): void
     {
         if ($units < 1) {
-            throw new \InvalidArgumentException(
-                sprintf('Stock movements need at least one unit, got %d.', $units)
-            );
+            throw new \InvalidArgumentException(\sprintf('Stock movements need at least one unit, got %d.', $units));
         }
     }
 
-    /**
-     * @param ProductId $id
-     * @return Product|null
-     */
     public function ofId(ProductId $id): ?Product
     {
-        // return $this->em->find(Product::class, $id);
-
-        $qb = $this->em->createQueryBuilder();
-
-        $qb->select('p')
+        $product = $this->em->createQueryBuilder()
+            ->select('p')
             ->from(Product::class, 'p')
             ->where('p.id = :id')
-            ->setParameter('id', $id, ProductIdType::NAME);
+            ->setParameter('id', $id, ProductIdType::NAME)
+            ->getQuery()
+            ->getOneOrNullResult();
 
-        return $qb->getQuery()->getOneOrNullResult();
+        return $product instanceof Product ? $product : null;
     }
 
     /**
-     * @param int $pageNumber
-     * @param int $pageSize
-     * @return array|Product[]
+     * The bounds of a page are the query's business (GetProductListQuery);
+     * the clamp that used to live here as well meant two places disagreeing on
+     * what a valid page is.
+     *
+     * @return list<Product>
      */
     public function findAll(int $pageNumber, int $pageSize): array
     {
-        $page     = max(1, $pageNumber);
-        $pageSize = max(1, min(100, $pageSize));
-        $offset   = ($page - 1) * $pageSize;
-
-        $qb = $this->em->createQueryBuilder();
-
-        $qb->select('p')
+        /** @var list<Product> $products */
+        $products = $this->em->createQueryBuilder()
+            ->select('p')
             ->from(Product::class, 'p')
             ->orderBy('p.name', 'ASC')
-            ->setFirstResult($offset)
-            ->setMaxResults($pageSize);
+            ->addOrderBy('p.id', 'ASC')
+            ->setFirstResult(($pageNumber - 1) * $pageSize)
+            ->setMaxResults($pageSize)
+            ->getQuery()
+            ->getResult();
 
-        return $qb->getQuery()->getResult();
+        return $products;
+    }
+
+    public function countAll(): int
+    {
+        $count = $this->em->createQueryBuilder()
+            ->select('COUNT(p.id)')
+            ->from(Product::class, 'p')
+            ->getQuery()
+            ->getSingleScalarResult();
+
+        return max(0, (int) $count);
     }
 }

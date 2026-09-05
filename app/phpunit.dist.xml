@@ -1,19 +1,44 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<phpunit bootstrap="tests/bootstrap.php" colors="true">
+<!-- The database is chosen by DATABASE_URL: .env.test points at SQLite for local
+     runs and CI exports a MySQL DSN. It is deliberately not set here, because a
+     value in this file would shadow the one CI provides. Tests that need MySQL
+     semantics carry the `mysql` group, excluded by default and run in CI. -->
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
+         bootstrap="tests/bootstrap.php"
+         colors="true"
+         cacheDirectory=".phpunit.cache"
+         failOnDeprecation="true"
+         failOnNotice="true"
+         failOnWarning="true"
+         failOnRisky="true"
+         beStrictAboutOutputDuringTests="true"
+         displayDetailsOnTestsThatTriggerDeprecations="true"
+         displayDetailsOnTestsThatTriggerNotices="true"
+         displayDetailsOnTestsThatTriggerWarnings="true"
+>
     <php>
         <server name="APP_ENV" value="test"/>
         <server name="APP_DEBUG" value="0"/>
         <server name="KERNEL_CLASS" value="Siroko\Kernel"/>
-        <env name="DATABASE_URL" value="mysql://root:sVlPsF32847@db:3306/siroko_cart?serverVersion=8.0.43"/>
-        <env name="SYMFONY_DEPRECATIONS_HELPER" value="verbose"/>
     </php>
 
     <testsuites>
-        <testsuite name="Project Test Suite">
-            <directory>tests</directory>
+        <testsuite name="unit">
+            <directory>tests/Cart/Domain</directory>
+            <directory>tests/Cart/Application</directory>
+        </testsuite>
+        <testsuite name="infrastructure">
+            <directory>tests/Cart/Infrastructure</directory>
         </testsuite>
     </testsuites>
+
+    <groups>
+        <exclude>
+            <group>mysql</group>
+        </exclude>
+    </groups>
 
     <source ignoreSuppressionOfDeprecations="true"
             ignoreIndirectDeprecations="true"
@@ -23,6 +48,10 @@
         <include>
             <directory>src</directory>
         </include>
+        <exclude>
+            <!-- MySQL DDL, exercised by `doctrine:migrations:migrate` in CI rather than by PHPUnit. -->
+            <directory>src/Cart/Infrastructure/Persistence/Doctrine/Migrations</directory>
+        </exclude>
 
         <deprecationTrigger>
             <method>Doctrine\Deprecations\Deprecation::trigger</method>

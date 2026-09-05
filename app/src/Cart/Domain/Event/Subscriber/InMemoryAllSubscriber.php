@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Siroko\Cart\Domain\Event\Subscriber;
 
 use Siroko\Cart\Domain\Event\DomainEvent;
@@ -10,9 +12,7 @@ class InMemoryAllSubscriber implements DomainEventSubscriber
     /** @var DomainEvent[] */
     private array $events = [];
 
-    public function __construct()
-    {
-    }
+    public function __construct() {}
 
     public function handle(DomainEvent $event): void
     {
@@ -24,9 +24,6 @@ class InMemoryAllSubscriber implements DomainEventSubscriber
         return true;
     }
 
-    /**
-     * {@inheritDoc}
-     */
     public function events(): array
     {
         return $this->events;

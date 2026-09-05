@@ -5,8 +5,12 @@
                                       http://doctrine-project.org/schemas/orm/doctrine-mapping.xsd">
 
     <entity name="Siroko\Cart\Domain\Entity\Product"
-            table="product"
-            repository-class="Siroko\Cart\Infrastructure\Persistence\Doctrine\Repository\DoctrineProductRepository">
+            table="product">
+
+        <!-- A code names exactly one product; the handler checks first and this index settles races. -->
+        <unique-constraints>
+            <unique-constraint name="uniq_product_code" columns="code"/>
+        </unique-constraints>
 
         <id name="id" type="product_id" column="id">
             <generator strategy="NONE"/>
@@ -33,7 +37,7 @@
                nullable="false"
         />
 
-        <!-- Embeddable -->
-        <embedded name="price" class="Siroko\Cart\Infrastructure\Persistence\Doctrine\Embeddable\PriceEmbeddable" />
+        <!-- Embeddable: columns price_amount / price_currency -->
+        <embedded name="price" class="Siroko\Cart\Domain\ValueObject\Price" />
     </entity>
 </doctrine-mapping>

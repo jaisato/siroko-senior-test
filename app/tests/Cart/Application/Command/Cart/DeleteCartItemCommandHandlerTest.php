@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Siroko\Tests\Cart\Application\Command\Cart;
 
 use PHPUnit\Framework\TestCase;
@@ -9,6 +11,10 @@ use Siroko\Cart\Application\Command\Cart\DeleteCartItemCommandHandler;
 use Siroko\Cart\Domain\Entity\Cart;
 use Siroko\Cart\Domain\Entity\CartItem;
 use Siroko\Cart\Domain\Entity\Product;
+use Siroko\Cart\Domain\Exception\CartItemNotFoundException;
+use Siroko\Cart\Domain\Exception\CartNotFoundException;
+use Siroko\Cart\Domain\Exception\InvalidCartStatusException;
+use Siroko\Cart\Domain\Exception\InvalidIdentifierException;
 use Siroko\Cart\Domain\Repository\CartItemRepository;
 use Siroko\Cart\Domain\Repository\CartRepository;
 use Siroko\Cart\Domain\Repository\ProductRepository;
@@ -59,9 +65,10 @@ final class DeleteCartItemCommandHandlerTest extends TestCase
     /**
      * A delete aimed at a cart that does not own the item must not credit any
      * stock - otherwise a repeated or mistargeted request mints inventory,
-     * which is the same bug pointing the other way.
+     * which is the same bug pointing the other way. From the point of view of
+     * the cart named in the request, that line does not exist.
      */
-    public function test_an_item_belonging_to_another_cart_does_not_credit_stock(): void
+    public function test_an_item_belonging_to_another_cart_is_not_found_and_credits_nothing(): void
     {
         $product = $this->product(quantity: 4);
         $otherCart = $this->cart(CartStatus::PENDING);
@@ -71,13 +78,21 @@ final class DeleteCartItemCommandHandlerTest extends TestCase
 
         $handler = $this->handler($targetCart, $item);
 
-        $handler(new DeleteCartItemCommand($targetCart->id()->toString(), $item->id()->toString()));
+        try {
+            $handler(new DeleteCartItemCommand($targetCart->id()->toString(), $item->id()->toString()));
+            self::fail('expected an exception');
+        } catch (CartItemNotFoundException) {
+        }
 
         self::assertSame([], $this->returned);
+        self::assertNotContains('removeItem', $this->session->log);
     }
 
-    /** Once a cart is paid the unit is sold, not reserved, so it is not ours to return. */
-    public function test_a_paid_cart_does_not_credit_stock(): void
+    /**
+     * Once a cart is paid the unit is sold, not reserved, so it is not ours to
+     * return - and the line is not ours to remove either.
+     */
+    public function test_a_paid_cart_is_a_conflict_and_nothing_moves(): void
     {
         $product = $this->product(quantity: 4);
         $cart = $this->cart(CartStatus::PAID);
@@ -85,23 +100,35 @@ final class DeleteCartItemCommandHandlerTest extends TestCase
 
         $handler = $this->handler($cart, $item);
 
-        $handler(new DeleteCartItemCommand($cart->id()->toString(), $item->id()->toString()));
+        try {
+            $handler(new DeleteCartItemCommand($cart->id()->toString(), $item->id()->toString()));
+            self::fail('expected an exception');
+        } catch (InvalidCartStatusException) {
+        }
 
         self::assertSame([], $this->returned);
+        self::assertNotContains('removeItem', $this->session->log);
+        self::assertSame(['cart:' . $cart->id()->toString()], $this->locked, 'the status is decided before the line is even loaded');
     }
 
-    public function test_an_unknown_item_is_a_no_op_for_stock(): void
+    /** 204 for an unknown item made a typo indistinguishable from a removal. */
+    public function test_an_unknown_item_is_not_found(): void
     {
         $cart = $this->cart(CartStatus::PENDING);
 
         $handler = $this->handler($cart, null);
 
-        $handler(new DeleteCartItemCommand($cart->id()->toString(), Uuid::uuid4()->toString()));
+        try {
+            $handler(new DeleteCartItemCommand($cart->id()->toString(), Uuid::uuid4()->toString()));
+            self::fail('expected an exception');
+        } catch (CartItemNotFoundException) {
+        }
 
         self::assertSame([], $this->returned);
+        self::assertNotContains('removeItem', $this->session->log);
     }
 
-    public function test_an_unknown_cart_is_a_no_op_for_stock(): void
+    public function test_an_unknown_cart_is_not_found(): void
     {
         $product = $this->product(quantity: 4);
         $cart = $this->cart(CartStatus::PENDING);
@@ -109,9 +136,14 @@ final class DeleteCartItemCommandHandlerTest extends TestCase
 
         $handler = $this->handler(null, $item);
 
-        $handler(new DeleteCartItemCommand($cart->id()->toString(), $item->id()->toString()));
+        try {
+            $handler(new DeleteCartItemCommand($cart->id()->toString(), $item->id()->toString()));
+            self::fail('expected an exception');
+        } catch (CartNotFoundException) {
+        }
 
         self::assertSame([], $this->returned);
+        self::assertSame(['cart:' . $cart->id()->toString()], $this->locked, 'no line is looked up without a cart');
     }
 
     /**
@@ -176,13 +208,17 @@ final class DeleteCartItemCommandHandlerTest extends TestCase
 
         // Misma identidad, estado ya pagado: es lo que devuelve la lectura
         // bloqueada cuando el checkout ha ganado la carrera.
-        $lockedCart = new Cart($staleCart->id(), new CartStatus(CartStatus::PAID));
+        $lockedCart = new Cart($staleCart->id(), CartStatus::paid());
 
         $handler = $this->handler($lockedCart, $item);
 
-        $handler(new DeleteCartItemCommand($staleCart->id()->toString(), $item->id()->toString()));
+        $this->expectException(InvalidCartStatusException::class);
 
-        self::assertSame([], $this->returned);
+        try {
+            $handler(new DeleteCartItemCommand($staleCart->id()->toString(), $item->id()->toString()));
+        } finally {
+            self::assertSame([], $this->returned);
+        }
     }
 
     /**
@@ -208,6 +244,13 @@ final class DeleteCartItemCommandHandlerTest extends TestCase
         );
     }
 
+    public function test_the_command_validates_its_identifiers(): void
+    {
+        $this->expectException(InvalidIdentifierException::class);
+
+        new DeleteCartItemCommand(Uuid::uuid4()->toString(), 'item-1');
+    }
+
     private function cart(int $status): Cart
     {
         return new Cart(CartId::fromString(Uuid::uuid4()->toString()), new CartStatus($status));
@@ -216,7 +259,13 @@ final class DeleteCartItemCommandHandlerTest extends TestCase
     private function itemIn(Cart $cart, Product $product): CartItem
     {
         $item = new CartItem(ItemId::fromString(Uuid::uuid4()->toString()), $product);
-        $cart->addItem($item);
+        // A paid cart refuses new lines, so the line is attached while pending
+        // and the status is set afterwards, as it would have happened in life.
+        if ($cart->isPending()) {
+            $cart->addItem($item);
+        } else {
+            $item->setCart($cart);
+        }
 
         return $item;
     }
@@ -225,8 +274,8 @@ final class DeleteCartItemCommandHandlerTest extends TestCase
     {
         return new Product(
             ProductId::fromString(Uuid::uuid4()->toString()),
-            new ProductCode('ABC123'),
-            new Name('A product'),
+            ProductCode::fromString('ABC123'),
+            Name::fromString('A product'),
             Price::of('10.00', 'EUR'),
             new Quantity($quantity),
         );
@@ -246,15 +295,15 @@ final class DeleteCartItemCommandHandlerTest extends TestCase
     {
         $items = $this->createStub(CartItemRepository::class);
         $items->method('ofIdForUpdate')->willReturnCallback(
-            function ($id) use ($item): ?CartItem {
+            function (ItemId $id) use ($item): ?CartItem {
                 $this->locked[] = 'item:' . $id->toString();
 
                 return $item;
-            }
+            },
         );
         // El camino sin bloqueo no debe usarse.
         $items->method('ofId')->willReturnCallback(
-            static fn () => self::fail('the item must be loaded with its row locked')
+            static fn() => self::fail('the item must be loaded with its row locked'),
         );
 
         return $items;
@@ -264,19 +313,19 @@ final class DeleteCartItemCommandHandlerTest extends TestCase
     {
         $carts = $this->createStub(CartRepository::class);
         $carts->method('ofIdForUpdate')->willReturnCallback(
-            function ($id) use ($cart): ?Cart {
+            function (CartId $id) use ($cart): ?Cart {
                 $this->locked[] = 'cart:' . $id->toString();
 
                 return $cart;
-            }
+            },
         );
         $carts->method('ofId')->willReturnCallback(
-            static fn () => self::fail('the cart must be loaded with its row locked')
+            static fn() => self::fail('the cart must be loaded with its row locked'),
         );
         $carts->method('removeItem')->willReturnCallback(
             function (): void {
                 $this->session->log[] = 'removeItem';
-            }
+            },
         );
 
         return $carts;
@@ -291,10 +340,10 @@ final class DeleteCartItemCommandHandlerTest extends TestCase
     {
         $products = $this->createStub(ProductRepository::class);
         $products->method('returnStock')->willReturnCallback(
-            function ($id, int $units): void {
+            function (ProductId $id, int $units): void {
                 $this->returned[] = [$id->toString(), $units];
                 $this->session->log[] = 'returnStock';
-            }
+            },
         );
 
         return $products;

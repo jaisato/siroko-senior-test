@@ -1,64 +1,56 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Siroko\Cart\Domain\ValueObject;
 
 use Siroko\Cart\Domain\Exception\NameInvalidLengthException;
 
-final class Name
+final class Name implements StringValueObject
 {
     public const MIN_LENGTH = 3;
 
     public const MAX_LENGTH = 200;
 
-    private string $value;
+    private function __construct(private readonly string $value) {}
 
     /**
-     * @param string $value
+     * Length is counted in characters, not bytes: `strlen()` rejected "€10" as
+     * too short while letting a 120-character multibyte name through, and the
+     * message no longer echoes the value the caller already has.
+     *
      * @throws NameInvalidLengthException
      */
-    public function __construct(string $value)
+    public static function fromString(string $value): self
     {
-        $this->setName($value);
-    }
+        $length = mb_strlen($value);
 
-    /**
-     * @param string $name
-     * @return void
-     * @throws NameInvalidLengthException
-     */
-    private function setName(string $name): void
-    {
-        $this->checkIsValid($name);
-        $this->value = $name;
-    }
-
-    /**
-     * @param string $name
-     * @return void
-     * @throws NameInvalidLengthException
-     */
-    private function checkIsValid(string $name)
-    {
-        $length = strlen($name);
         if ($length < self::MIN_LENGTH || $length > self::MAX_LENGTH) {
-            throw new NameInvalidLengthException("Invalid length for name: {$name}");
+            throw new NameInvalidLengthException(\sprintf('The name must be between %d and %d characters long.', self::MIN_LENGTH, self::MAX_LENGTH));
         }
+
+        return new self($value);
     }
 
     /**
-     * @return string
+     * Rehydrates a value that was accepted when it was written.
+     *
+     * Validation belongs to the write path. Re-running it while loading a row
+     * means that tightening a rule makes every existing product that no longer
+     * satisfies it unreadable - a 500 on GET - instead of merely unwritable.
      */
+    public static function fromPersistence(string $value): static
+    {
+        return new self($value);
+    }
+
     public function toString(): string
     {
         return $this->value;
     }
 
-    /**
-     * @return string
-     */
     public function __toString(): string
     {
         return $this->value;
     }
 }
-

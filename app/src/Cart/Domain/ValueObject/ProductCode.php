@@ -1,63 +1,56 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Siroko\Cart\Domain\ValueObject;
 
 use Siroko\Cart\Domain\Exception\InvalidProductCodeException;
 
-final class ProductCode
+final class ProductCode implements StringValueObject
 {
     public const MIN_LENGTH = 1;
+
     public const MAX_LENGTH = 50;
 
-    /**
-     * @var string
-     */
-    private string $value;
+    private function __construct(private readonly string $value) {}
 
     /**
-     * @param int|string $code
+     * Surrounding whitespace is not part of a code; the length is checked in
+     * characters, and the message does not echo the rejected value.
+     *
      * @throws InvalidProductCodeException
      */
-    public function __construct(int|string $code)
+    public static function fromString(string $code): self
     {
-        $this->setCode($code);
-    }
+        $code = trim($code);
+        $length = mb_strlen($code);
 
-    /**
-     * @param int|string $code
-     * @return void
-     * @throws InvalidProductCodeException
-     */
-    private function setCode(int|string $code): void
-    {
-        $this->checkIsValidCode($code);
-        $this->value = trim((string) $code);
-    }
-
-    /**
-     * @param int|string $code
-     * @return void
-     * @throws InvalidProductCodeException
-     */
-    private function checkIsValidCode(int|string $code): void
-    {
-        $length = strlen(trim((string) $code));
         if ($length < self::MIN_LENGTH || $length > self::MAX_LENGTH) {
-            throw new InvalidProductCodeException("Product code is invalid: {$code}");
+            throw new InvalidProductCodeException(\sprintf('The product code must be between %d and %d characters long.', self::MIN_LENGTH, self::MAX_LENGTH));
         }
+
+        return new self($code);
     }
 
     /**
-     * @return string
+     * Rehydrates a value that was accepted when it was written; see
+     * {@see Name::fromPersistence()} for why the rules are not re-applied.
      */
+    public static function fromPersistence(string $code): static
+    {
+        return new self($code);
+    }
+
     public function toString(): string
     {
         return $this->value;
     }
 
-    /**
-     * @return string
-     */
+    public function equals(self $other): bool
+    {
+        return $this->value === $other->value;
+    }
+
     public function __toString(): string
     {
         return $this->value;

@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Siroko\Cart\Infrastructure\CommandBus;
 
 use League\Tactician\CommandBus as TacticianCommandBus;
@@ -13,7 +15,7 @@ abstract class CommandBus
         $this->commandBus = $commandBus;
     }
 
-    public function handle(object $command)
+    public function handle(object $command): mixed
     {
         return $this->commandBus->handle($command);
     }

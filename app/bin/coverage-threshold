@@ -1,0 +1,40 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/*
+ * Fails when the line coverage of a Clover report is below a threshold.
+ *
+ *   bin/coverage-threshold var/coverage/clover.xml 80
+ *
+ * PHPUnit can only measure coverage with a driver (pcov or Xdebug); CI installs
+ * pcov, local runs usually have neither, so the threshold is enforced in CI.
+ */
+
+$file = $argv[1] ?? 'var/coverage/clover.xml';
+$threshold = (float) ($argv[2] ?? 80);
+
+if (!is_file($file)) {
+    fwrite(\STDERR, \sprintf("Coverage report %s not found.\n", $file));
+    exit(2);
+}
+
+$report = @simplexml_load_file($file);
+
+if (false === $report || !isset($report->project->metrics)) {
+    fwrite(\STDERR, \sprintf("%s is not a Clover report.\n", $file));
+    exit(2);
+}
+
+$metrics = $report->project->metrics;
+$statements = (int) $metrics['statements'];
+$covered = (int) $metrics['coveredstatements'];
+$coverage = $statements > 0 ? $covered / $statements * 100 : 0.0;
+
+printf("Line coverage: %.2f%% (%d of %d statements), threshold %.0f%%.\n", $coverage, $covered, $statements, $threshold);
+
+if ($coverage + 1e-9 < $threshold) {
+    fwrite(\STDERR, "Coverage is below the threshold.\n");
+    exit(1);
+}

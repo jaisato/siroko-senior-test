@@ -1,39 +1,20 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Siroko\Cart\Domain\Entity;
 
 use Siroko\Cart\Domain\ValueObject\ItemId;
 
 class CartItem
 {
-    /**
-     * @var ItemId
-     */
-    private ItemId $id;
-
-    /**
-     * @var Product
-     */
-    private Product $product;
-
-    /**
-     * @var Cart
-     */
     private Cart $cart;
 
-    /**
-     * @param ItemId $id
-     * @param Product $product
-     */
-    public function __construct(ItemId $id, Product $product)
-    {
-        $this->id = $id;
-        $this->product = $product;
-    }
+    public function __construct(
+        private ItemId $id,
+        private Product $product,
+    ) {}
 
-    /**
-     * @return ItemId
-     */
     public function id(): ItemId
     {
         return $this->id;
@@ -47,6 +28,11 @@ class CartItem
     public function getCart(): Cart
     {
         return $this->cart;
+    }
+
+    public function belongsTo(Cart $cart): bool
+    {
+        return isset($this->cart) && $this->cart->id()->equals($cart->id());
     }
 
     public function setProduct(Product $product): void

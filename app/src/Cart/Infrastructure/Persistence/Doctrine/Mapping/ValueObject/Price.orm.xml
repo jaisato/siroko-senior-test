@@ -4,7 +4,12 @@
                   xsi:schemaLocation="http://doctrine-project.org/schemas/orm/doctrine-mapping
                                       http://doctrine-project.org/schemas/orm/doctrine-mapping.xsd">
 
-    <embeddable name="Siroko\Cart\Infrastructure\Persistence\Doctrine\Embeddable\PriceEmbeddable">
+    <!--
+        The domain Price is mapped directly as an embeddable. The entity used to
+        hold an Infrastructure copy of it (PriceEmbeddable) and convert on every
+        access, which put an ORM concern inside the domain model.
+    -->
+    <embeddable name="Siroko\Cart\Domain\ValueObject\Price">
         <field name="amount"   column="amount"   type="decimal" precision="19" scale="4" nullable="false"/>
         <field name="currency" column="currency" type="string"  length="3"  nullable="false"/>
     </embeddable>

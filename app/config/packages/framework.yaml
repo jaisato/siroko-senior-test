@@ -2,8 +2,8 @@
 framework:
     secret: '%env(APP_SECRET)%'
 
-    # Note that the session will be started ONLY if you read or write from it.
-    session: true
+    # A stateless JSON API: no cookie, no session storage to configure or leak.
+    session: false
 
     #esi: true
     #fragments: true
@@ -11,8 +11,6 @@ framework:
 when@test:
     framework:
         test: true
-        session:
-            storage_factory_id: session.storage.factory.mock_file
         profiler:
             collect: false
         http_method_override: false
