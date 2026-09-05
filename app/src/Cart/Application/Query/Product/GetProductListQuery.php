@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Siroko\Cart\Application\Query\Product;
 
+use Siroko\Cart\Domain\Repository\ProductCriteria;
+
 final class GetProductListQuery
 {
     /**
@@ -22,13 +24,15 @@ final class GetProductListQuery
      */
     public readonly int $pageSize;
 
+    public readonly ProductCriteria $criteria;
+
     /**
      * The bounds are enforced once, here, where the query is built. The
      * controller clamps what the client sent to these bounds before building
      * the query, and the repository trusts them, so there is exactly one place
      * that says what a valid page is.
      */
-    public function __construct(int $pageNumber, int $pageSize)
+    public function __construct(int $pageNumber, int $pageSize, ?ProductCriteria $criteria = null)
     {
         if ($pageNumber < 1) {
             throw new \InvalidArgumentException(\sprintf('Page numbers start at 1, got %d.', $pageNumber));
@@ -40,5 +44,6 @@ final class GetProductListQuery
 
         $this->pageNumber = $pageNumber;
         $this->pageSize = $pageSize;
+        $this->criteria = $criteria ?? ProductCriteria::all();
     }
 }

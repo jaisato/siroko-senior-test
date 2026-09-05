@@ -6,13 +6,16 @@ namespace Siroko\Cart\Infrastructure\Api\Controller\Product;
 
 use Siroko\Cart\Application\Query\Product\GetProductListQuery;
 use Siroko\Cart\Domain\CommandBus\CommandBusRead;
+use Siroko\Cart\Domain\Exception\InvalidProductCriteriaException;
+use Siroko\Cart\Domain\Repository\ProductCriteria;
 use Siroko\Cart\Infrastructure\Api\ApiExceptionMapper;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpKernel\Exception\BadRequestHttpException;
 
 /**
- * GET /v1/products?pageNumber=&pageSize= - routed by ProductResource.
+ * GET /v1/products?pageNumber=&pageSize=&q=&minPrice=&maxPrice=&inStock=&sort=
+ * - routed by ProductResource.
  */
 final class GetProductListController
 {
@@ -38,13 +41,47 @@ final class GetProductListController
             $pageSize = min(GetProductListQuery::MAX_PAGE_SIZE, max(1, self::integerQuery($request, 'pageSize', self::DEFAULT_PAGE_SIZE)));
 
             $products = $this->commandBusRead->handle(
-                new GetProductListQuery($pageNumber, $pageSize),
+                new GetProductListQuery($pageNumber, $pageSize, self::criteria($request)),
             );
 
             return new JsonResponse($products);
         } catch (\Throwable $e) {
             return $this->errors->toResponse($e);
         }
+    }
+
+    /**
+     * The filters are validated by ProductCriteria; an unknown filter name is
+     * ignored, an unusable value of a known one is a 400.
+     */
+    private static function criteria(Request $request): ProductCriteria
+    {
+        return ProductCriteria::of(
+            text: self::stringQuery($request, 'q'),
+            minPrice: self::stringQuery($request, 'minPrice'),
+            maxPrice: self::stringQuery($request, 'maxPrice'),
+            inStock: self::booleanQuery($request, 'inStock'),
+            sort: self::stringQuery($request, 'sort'),
+        );
+    }
+
+    private static function stringQuery(Request $request, string $name): ?string
+    {
+        $value = $request->query->get($name);
+
+        return null === $value || '' === $value ? null : $value;
+    }
+
+    private static function booleanQuery(Request $request, string $name): ?bool
+    {
+        $value = self::stringQuery($request, $name);
+
+        return match ($value) {
+            null => null,
+            'true', '1' => true,
+            'false', '0' => false,
+            default => throw InvalidProductCriteriaException::notABoolean($name),
+        };
     }
 
     /**

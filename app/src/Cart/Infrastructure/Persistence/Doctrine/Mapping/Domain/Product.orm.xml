@@ -37,6 +37,9 @@
                nullable="false"
         />
 
+        <!-- Set when the product is withdrawn from the catalogue; the row stays for the lines that reference it. -->
+        <field name="deletedAt" column="deleted_at" type="datetime_immutable" nullable="true"/>
+
         <!-- Embeddable: columns price_amount / price_currency -->
         <embedded name="price" class="Siroko\Cart\Domain\ValueObject\Price" />
     </entity>

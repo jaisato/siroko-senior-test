@@ -4,13 +4,18 @@ declare(strict_types=1);
 
 namespace Siroko\Cart\Infrastructure\Persistence\Doctrine\Repository;
 
+use Doctrine\DBAL\LockMode;
 use Doctrine\DBAL\ParameterType;
+use Doctrine\DBAL\Types\Types;
 use Doctrine\ORM\EntityManagerInterface;
+use Doctrine\ORM\QueryBuilder;
 use Ramsey\Uuid\Uuid;
 use Siroko\Cart\Domain\Entity\Product;
+use Siroko\Cart\Domain\Repository\ProductCriteria;
 use Siroko\Cart\Domain\Repository\ProductRepository;
 use Siroko\Cart\Domain\ValueObject\ProductCode;
 use Siroko\Cart\Domain\ValueObject\ProductId;
+use Siroko\Cart\Domain\ValueObject\Quantity;
 use Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\ProductCodeType;
 use Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\ProductIdType;
 
@@ -31,17 +36,19 @@ final class DoctrineProductRepository implements ProductRepository
         $this->em->flush();
     }
 
-    public function existsWithCode(ProductCode $code): bool
+    public function existsWithCode(ProductCode $code, ?ProductId $except = null): bool
     {
-        $count = $this->em->createQueryBuilder()
+        $qb = $this->em->createQueryBuilder()
             ->select('COUNT(p.id)')
             ->from(Product::class, 'p')
             ->where('p.code = :code')
-            ->setParameter('code', $code, ProductCodeType::NAME)
-            ->getQuery()
-            ->getSingleScalarResult();
+            ->setParameter('code', $code, ProductCodeType::NAME);
 
-        return (int) $count > 0;
+        if (null !== $except) {
+            $qb->andWhere('p.id <> :except')->setParameter('except', $except, ProductIdType::NAME);
+        }
+
+        return (int) $qb->getQuery()->getSingleScalarResult() > 0;
     }
 
     /**
@@ -92,6 +99,27 @@ final class DoctrineProductRepository implements ProductRepository
     }
 
     /**
+     * A recount: the column is replaced, in one statement, for a product that
+     * is still in the catalogue.
+     */
+    public function setStock(ProductId $id, Quantity $quantity): bool
+    {
+        $affected = $this->em->getConnection()->executeStatement(
+            'UPDATE product SET quantity = :quantity WHERE id = :id AND deleted_at IS NULL',
+            ['quantity' => $quantity->asInt(), 'id' => $id],
+            ['quantity' => ParameterType::INTEGER, 'id' => ProductIdType::NAME],
+        );
+
+        if (1 !== $affected) {
+            return false;
+        }
+
+        $this->refreshIfManaged($id);
+
+        return true;
+    }
+
+    /**
      * The raw UPDATE bypasses the unit of work, so a Product already loaded in
      * this request kept its old quantity in memory. Nothing wrote that stale
      * value back - Doctrine only flushes what changed in PHP - but anything
@@ -127,15 +155,49 @@ final class DoctrineProductRepository implements ProductRepository
 
     public function ofId(ProductId $id): ?Product
     {
-        $product = $this->em->createQueryBuilder()
-            ->select('p')
-            ->from(Product::class, 'p')
-            ->where('p.id = :id')
+        $product = $this->inCatalogue()
+            ->andWhere('p.id = :id')
             ->setParameter('id', $id, ProductIdType::NAME)
             ->getQuery()
             ->getOneOrNullResult();
 
         return $product instanceof Product ? $product : null;
+    }
+
+    public function ofIdForUpdate(ProductId $id): ?Product
+    {
+        $product = $this->inCatalogue()
+            ->andWhere('p.id = :id')
+            ->setParameter('id', $id, ProductIdType::NAME)
+            ->getQuery()
+            ->setLockMode(LockMode::PESSIMISTIC_WRITE)
+            ->getOneOrNullResult();
+
+        return $product instanceof Product ? $product : null;
+    }
+
+    public function ofCode(ProductCode $code): ?Product
+    {
+        $product = $this->inCatalogue()
+            ->andWhere('p.code = :code')
+            ->setParameter('code', $code, ProductCodeType::NAME)
+            ->getQuery()
+            ->getOneOrNullResult();
+
+        return $product instanceof Product ? $product : null;
+    }
+
+    /**
+     * @return list<Product>
+     */
+    public function findAll(int $pageNumber, int $pageSize): array
+    {
+        return $this->search(ProductCriteria::all(), $pageNumber, $pageSize);
+    }
+
+    public function countAll(): int
+    {
+        return $this->countMatching(ProductCriteria::all());
     }
 
     /**
@@ -145,14 +207,21 @@ final class DoctrineProductRepository implements ProductRepository
      *
      * @return list<Product>
      */
-    public function findAll(int $pageNumber, int $pageSize): array
+    public function search(ProductCriteria $criteria, int $pageNumber, int $pageSize): array
     {
+        $qb = $this->matching($criteria);
+
+        $direction = $criteria->sort->isDescending() ? 'DESC' : 'ASC';
+
+        // Every order ends on the id so that pages never overlap on ties.
+        $qb->orderBy(match ($criteria->sort->field()) {
+            'name' => 'p.name',
+            'price' => 'p.price.amount',
+            'code' => 'p.code',
+        }, $direction)->addOrderBy('p.id', $direction);
+
         /** @var list<Product> $products */
-        $products = $this->em->createQueryBuilder()
-            ->select('p')
-            ->from(Product::class, 'p')
-            ->orderBy('p.name', 'ASC')
-            ->addOrderBy('p.id', 'ASC')
+        $products = $qb
             ->setFirstResult(($pageNumber - 1) * $pageSize)
             ->setMaxResults($pageSize)
             ->getQuery()
@@ -161,14 +230,59 @@ final class DoctrineProductRepository implements ProductRepository
         return $products;
     }
 
-    public function countAll(): int
+    public function countMatching(ProductCriteria $criteria): int
     {
-        $count = $this->em->createQueryBuilder()
+        $count = $this->matching($criteria)
             ->select('COUNT(p.id)')
-            ->from(Product::class, 'p')
             ->getQuery()
             ->getSingleScalarResult();
 
         return max(0, (int) $count);
+    }
+
+    /**
+     * Products still in the catalogue: withdrawn ones are invisible to every
+     * read here, though the lines that reference them still load them.
+     */
+    private function inCatalogue(): QueryBuilder
+    {
+        return $this->em->createQueryBuilder()
+            ->select('p')
+            ->from(Product::class, 'p')
+            ->where('p.deletedAt IS NULL');
+    }
+
+    /**
+     * The text is matched case-insensitively against the name and the code.
+     * `%` and `_` in it are escaped so that they mean themselves; the escape
+     * character is declared explicitly because MySQL's default one (`\`) is
+     * disabled by the NO_BACKSLASH_ESCAPES SQL mode.
+     */
+    private function matching(ProductCriteria $criteria): QueryBuilder
+    {
+        $qb = $this->inCatalogue();
+
+        if (null !== $criteria->text) {
+            $pattern = '%' . mb_strtolower(str_replace(['!', '%', '_'], ['!!', '!%', '!_'], $criteria->text)) . '%';
+
+            $qb->andWhere("LOWER(p.name) LIKE :text ESCAPE '!' OR LOWER(p.code) LIKE :text ESCAPE '!'")
+                ->setParameter('text', $pattern);
+        }
+
+        if (null !== $criteria->minPrice) {
+            $qb->andWhere('p.price.amount >= :minPrice')->setParameter('minPrice', $criteria->minPrice, Types::DECIMAL);
+        }
+
+        if (null !== $criteria->maxPrice) {
+            $qb->andWhere('p.price.amount <= :maxPrice')->setParameter('maxPrice', $criteria->maxPrice, Types::DECIMAL);
+        }
+
+        if (true === $criteria->inStock) {
+            $qb->andWhere('p.quantity > 0');
+        } elseif (false === $criteria->inStock) {
+            $qb->andWhere('p.quantity = 0');
+        }
+
+        return $qb;
     }
 }
