@@ -22,6 +22,10 @@ use Siroko\Cart\Infrastructure\Api\ApiExceptionMapper;
 use Symfony\Bundle\FrameworkBundle\KernelBrowser;
 use Symfony\Bundle\FrameworkBundle\Test\WebTestCase;
 use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\Messenger\Envelope;
+use Symfony\Component\Messenger\MessageBusInterface;
+use Symfony\Component\Messenger\Stamp\ReceivedStamp;
+use Symfony\Component\Messenger\Transport\InMemory\InMemoryTransport;
 use Symfony\Component\Routing\RouterInterface;
 
 /**
@@ -163,14 +167,48 @@ abstract class ApiTestCase extends WebTestCase
      */
     protected function persistCart(int $status = CartStatus::PENDING, Product ...$products): Cart
     {
-        $cart = new Cart(CartId::fromString(Uuid::uuid4()->toString()), CartStatus::pending());
+        $lines = [];
 
         foreach ($products as $product) {
-            $cart->addItem(new CartItem(ItemId::fromString(Uuid::uuid4()->toString()), $product));
+            $lines[] = [$product, 1];
         }
 
-        if (CartStatus::PAID === $status) {
-            $cart->pay();
+        return $this->persistCartWithLines($status, $lines);
+    }
+
+    /**
+     * A cart whose lines hold several units each: `[[$product, 3], [$other, 1]]`.
+     * Like persistCart(), the products' stock is left alone.
+     *
+     * The status is reached through the domain transitions when the cart has
+     * lines. A cart without lines cannot be paid (that is a rule), so a
+     * non-pending empty cart is written directly in that status, the way a
+     * row hydrated from the database would be.
+     *
+     * @param list<array{0: Product, 1: int}> $lines
+     */
+    protected function persistCartWithLines(int $status, array $lines): Cart
+    {
+        if ([] === $lines && CartStatus::PENDING !== $status) {
+            $cart = new Cart(CartId::fromString(Uuid::uuid4()->toString()), new CartStatus($status));
+        } else {
+            $cart = new Cart(CartId::fromString(Uuid::uuid4()->toString()), CartStatus::pending());
+
+            foreach ($lines as [$product, $units]) {
+                $cart->addItem(new CartItem(ItemId::fromString(Uuid::uuid4()->toString()), $product, new Quantity($units)));
+            }
+
+            if (CartStatus::PAID === $status || CartStatus::DELIVERED === $status) {
+                $cart->pay();
+            }
+
+            if (CartStatus::DELIVERED === $status) {
+                $cart->deliver();
+            }
+
+            if (CartStatus::CANCELED === $status) {
+                $cart->cancel();
+            }
         }
 
         $this->em()->persist($cart);
@@ -180,27 +218,27 @@ abstract class ApiTestCase extends WebTestCase
     }
 
     /**
-     * A cart whose lines hold several units each: `[[$product, 3], [$other, 1]]`.
-     * Like persistCart(), the products' stock is left alone.
-     *
-     * @param list<array{0: Product, 1: int}> $lines
+     * The in-memory `async` transport of the test environment: what the
+     * command bus handed to the queue during the request.
      */
-    protected function persistCartWithLines(int $status, array $lines): Cart
+    protected function asyncTransport(): InMemoryTransport
     {
-        $cart = new Cart(CartId::fromString(Uuid::uuid4()->toString()), CartStatus::pending());
+        $transport = static::getContainer()->get('messenger.transport.async');
+        self::assertInstanceOf(InMemoryTransport::class, $transport);
 
-        foreach ($lines as [$product, $units]) {
-            $cart->addItem(new CartItem(ItemId::fromString(Uuid::uuid4()->toString()), $product, new Quantity($units)));
-        }
+        return $transport;
+    }
 
-        if (CartStatus::PAID === $status) {
-            $cart->pay();
-        }
+    /**
+     * Runs a queued envelope the way the worker would: through the Messenger
+     * bus, marked as received so the bus handles it instead of sending it
+     * back to the transport.
+     */
+    protected function consume(Envelope $envelope): void
+    {
+        $bus = static::getContainer()->get(MessageBusInterface::class);
 
-        $this->em()->persist($cart);
-        $this->em()->flush();
-
-        return $cart;
+        $bus->dispatch($envelope->with(new ReceivedStamp('async')));
     }
 
     /**

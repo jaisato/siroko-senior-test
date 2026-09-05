@@ -9,6 +9,7 @@ use Psr\Log\LoggerInterface;
 use Siroko\Cart\Domain\Exception\CartItemNotFoundException;
 use Siroko\Cart\Domain\Exception\CartNotFoundException;
 use Siroko\Cart\Domain\Exception\DuplicateProductCodeException;
+use Siroko\Cart\Domain\Exception\EmptyCartException;
 use Siroko\Cart\Domain\Exception\InvalidCartLineException;
 use Siroko\Cart\Domain\Exception\InvalidCartStatusException;
 use Siroko\Cart\Domain\Exception\InvalidIdentifierException;
@@ -16,6 +17,7 @@ use Siroko\Cart\Domain\Exception\InvalidPriceException;
 use Siroko\Cart\Domain\Exception\InvalidProductCodeException;
 use Siroko\Cart\Domain\Exception\InvalidQuantityException;
 use Siroko\Cart\Domain\Exception\NameInvalidLengthException;
+use Siroko\Cart\Domain\Exception\OrderNotFoundException;
 use Siroko\Cart\Domain\Exception\OutOfStockException;
 use Siroko\Cart\Domain\Exception\PriceIsNotSameCurrencyException;
 use Siroko\Cart\Domain\Exception\ProductNotFoundException;
@@ -63,7 +65,9 @@ final class ApiExceptionMapper
         CartNotFoundException::class => Response::HTTP_NOT_FOUND,
         CartItemNotFoundException::class => Response::HTTP_NOT_FOUND,
         ProductNotFoundException::class => Response::HTTP_NOT_FOUND,
+        OrderNotFoundException::class => Response::HTTP_NOT_FOUND,
         InvalidCartStatusException::class => Response::HTTP_CONFLICT,
+        EmptyCartException::class => Response::HTTP_CONFLICT,
         OutOfStockException::class => Response::HTTP_CONFLICT,
         DuplicateProductCodeException::class => Response::HTTP_CONFLICT,
         // The request is well formed; it clashes with the currency the cart

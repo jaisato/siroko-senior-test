@@ -6,6 +6,11 @@ namespace Siroko\Cart\Domain\ValueObject;
 
 use Siroko\Cart\Domain\Exception\InvalidCartStatusException;
 
+/**
+ * Where a cart is in its life: PENDING -> PAID -> DELIVERED, and PENDING or
+ * PAID -> CANCELED. The transitions themselves live on the Cart entity; this
+ * object only knows the states.
+ */
 final class CartStatus implements \Stringable
 {
     public const PENDING = 1;
@@ -42,9 +47,34 @@ final class CartStatus implements \Stringable
         return new self(self::PAID);
     }
 
+    public static function delivered(): self
+    {
+        return new self(self::DELIVERED);
+    }
+
+    public static function canceled(): self
+    {
+        return new self(self::CANCELED);
+    }
+
     public function isPending(): bool
     {
         return self::PENDING === $this->value;
+    }
+
+    public function isPaid(): bool
+    {
+        return self::PAID === $this->value;
+    }
+
+    public function isDelivered(): bool
+    {
+        return self::DELIVERED === $this->value;
+    }
+
+    public function isCanceled(): bool
+    {
+        return self::CANCELED === $this->value;
     }
 
     public function equals(self $other): bool

@@ -7,6 +7,7 @@ namespace Siroko\Cart\Domain\Entity;
 use Brick\Money\Currency;
 use Doctrine\Common\Collections\ArrayCollection;
 use Doctrine\Common\Collections\Collection;
+use Siroko\Cart\Domain\Exception\EmptyCartException;
 use Siroko\Cart\Domain\Exception\InvalidCartStatusException;
 use Siroko\Cart\Domain\Exception\InvalidQuantityException;
 use Siroko\Cart\Domain\Exception\PriceIsNotSameCurrencyException;
@@ -218,15 +219,51 @@ class Cart
     }
 
     /**
-     * Checking out a cart twice is a conflict, not a fresh payment.
+     * Checking out a cart twice is a conflict, not a fresh payment; checking
+     * out an empty one is a payment for nothing, and refused as well.
      *
      * @throws InvalidCartStatusException
+     * @throws EmptyCartException
      */
     public function pay(): void
     {
         $this->ensurePending();
 
+        if ($this->items->isEmpty()) {
+            throw EmptyCartException::cannotBePaid();
+        }
+
         $this->status = CartStatus::paid();
+    }
+
+    /**
+     * Only what was paid for gets delivered.
+     *
+     * @throws InvalidCartStatusException
+     */
+    public function deliver(): void
+    {
+        if (!$this->status->isPaid()) {
+            throw new InvalidCartStatusException('Cart is not paid');
+        }
+
+        $this->status = CartStatus::delivered();
+    }
+
+    /**
+     * A pending cart is abandoned, a paid one is called off; either way the
+     * units its lines hold are the caller's to give back to stock. A delivered
+     * cart is done with, and a canceled one already is.
+     *
+     * @throws InvalidCartStatusException
+     */
+    public function cancel(): void
+    {
+        if (!$this->status->isPending() && !$this->status->isPaid()) {
+            throw new InvalidCartStatusException('Cart is neither pending nor paid');
+        }
+
+        $this->status = CartStatus::canceled();
     }
 
     /**

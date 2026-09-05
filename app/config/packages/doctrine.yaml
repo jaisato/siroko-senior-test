@@ -23,6 +23,8 @@ doctrine:
             cart_id: Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\CartIdType
             item_id: Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\ItemIdType
             cart_status: Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\CartStatusType
+            order_id: Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\OrderIdType
+            order_lines: Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\OrderLinesType
     orm:
         auto_generate_proxy_classes: true
         enable_lazy_ghost_objects: true

@@ -23,6 +23,9 @@ final class OpenApiDocumentationTest extends ApiTestCase
         self::assertArrayHasKey('delete', $paths['/api/v1/carts/{cartId}/items/{itemId}']);
         self::assertArrayHasKey('patch', $paths['/api/v1/carts/{cartId}/items/{itemId}']);
         self::assertArrayHasKey('put', $paths['/api/v1/carts/{id}/checkout']);
+        self::assertArrayHasKey('put', $paths['/api/v1/carts/{id}/deliver']);
+        self::assertArrayHasKey('delete', $paths['/api/v1/carts/{id}']);
+        self::assertArrayHasKey('get', $paths['/api/v1/orders/{id}']);
         self::assertArrayHasKey('put', $paths['/api/v1/carts/{cartId}/products/{productId}/add']);
         self::assertArrayHasKey('get', $paths['/api/v1/products/{id}']);
         self::assertArrayHasKey('get', $paths['/api/v1/products']);

@@ -17,3 +17,7 @@ services:
         exclude: '../../../src/Cart/Application/Query/**/*Query.php'
         tags:
             - { name: tactician.handler, typehints: true }
+
+    # Application services shared by several handlers (no bus involved).
+    Siroko\Cart\Application\Service\:
+        resource: '../../../src/Cart/Application/Service'

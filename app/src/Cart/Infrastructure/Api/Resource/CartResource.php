@@ -7,10 +7,13 @@ namespace Siroko\Cart\Infrastructure\Api\Resource;
 use ApiPlatform\Metadata as API;
 use ApiPlatform\OpenApi\Model;
 use Siroko\Cart\Application\Dto\Cart\CartRead;
+use Siroko\Cart\Application\Dto\Cart\CheckoutRead;
 use Siroko\Cart\Infrastructure\Api\Controller\Cart\AddCartProductController;
+use Siroko\Cart\Infrastructure\Api\Controller\Cart\CancelCartController;
 use Siroko\Cart\Infrastructure\Api\Controller\Cart\ChangeCartItemQuantityController;
 use Siroko\Cart\Infrastructure\Api\Controller\Cart\CheckoutCartController;
 use Siroko\Cart\Infrastructure\Api\Controller\Cart\DeleteCartItemController;
+use Siroko\Cart\Infrastructure\Api\Controller\Cart\DeliverCartController;
 use Siroko\Cart\Infrastructure\Api\Controller\Cart\GetCartController;
 use Siroko\Cart\Infrastructure\Api\Controller\Cart\PostCartController;
 use Symfony\Component\Routing\Requirement\Requirement;
@@ -185,9 +188,56 @@ use Symfony\Component\Routing\Requirement\Requirement;
             read: false,
             write: false,
             input: false,
-            output: CartRead::class,
+            output: CheckoutRead::class,
             openapi: new Model\Operation(
                 summary: 'Checkout cart by id',
+                description: 'Pays a pending, non-empty cart and places an order for it. Answers the paid cart together with the order (`order.id` is what to keep). The cart becomes read-only; `PUT .../deliver` and `DELETE` are the only writes left.',
+                parameters: [
+                    new Model\Parameter(
+                        name: 'id',
+                        in: 'path',
+                        required: true,
+                        description: 'Cart UUID',
+                        schema: ['type' => 'string', 'format' => 'uuid'],
+                    ),
+                ],
+            ),
+        ),
+        new API\Put(
+            name: 'api_cart_deliver_by_id',
+            uriTemplate: '/v1/carts/{id}/deliver',
+            requirements: ['id' => Requirement::UUID],
+            controller: DeliverCartController::class,
+            read: false,
+            write: false,
+            input: false,
+            output: CartRead::class,
+            openapi: new Model\Operation(
+                summary: 'Mark a paid cart as delivered',
+                description: 'Only a paid cart can be delivered (409 otherwise). Delivery is final: a delivered cart cannot be canceled.',
+                parameters: [
+                    new Model\Parameter(
+                        name: 'id',
+                        in: 'path',
+                        required: true,
+                        description: 'Cart UUID',
+                        schema: ['type' => 'string', 'format' => 'uuid'],
+                    ),
+                ],
+            ),
+        ),
+        new API\Delete(
+            name: 'api_cancel_cart_by_id',
+            uriTemplate: '/v1/carts/{id}',
+            requirements: ['id' => Requirement::UUID],
+            controller: CancelCartController::class,
+            read: false,
+            write: false,
+            output: false,
+            status: 204,
+            openapi: new Model\Operation(
+                summary: 'Cancel a cart',
+                description: 'Cancels a pending or paid cart and returns every unit its lines hold to stock. The cart stays readable with status 4 (canceled). A delivered or already canceled cart answers 409.',
                 parameters: [
                     new Model\Parameter(
                         name: 'id',

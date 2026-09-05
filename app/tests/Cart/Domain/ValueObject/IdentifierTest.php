@@ -11,10 +11,11 @@ use Siroko\Cart\Domain\Exception\InvalidIdentifierException;
 use Siroko\Cart\Domain\ValueObject\CartId;
 use Siroko\Cart\Domain\ValueObject\Identifier;
 use Siroko\Cart\Domain\ValueObject\ItemId;
+use Siroko\Cart\Domain\ValueObject\OrderId;
 use Siroko\Cart\Domain\ValueObject\ProductId;
 
 /**
- * CartId, ItemId and ProductId share one shape: a UUID, validated on construction.
+ * CartId, ItemId, ProductId and OrderId share one shape: a UUID, validated on construction.
  */
 final class IdentifierTest extends TestCase
 {
@@ -26,6 +27,7 @@ final class IdentifierTest extends TestCase
         yield 'cart' => [CartId::class];
         yield 'item' => [ItemId::class];
         yield 'product' => [ProductId::class];
+        yield 'order' => [OrderId::class];
     }
 
     /**

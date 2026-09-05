@@ -4,19 +4,15 @@ declare(strict_types=1);
 
 namespace Siroko\Cart\Infrastructure\Api\Controller\Cart;
 
-use Siroko\Cart\Application\Command\Cart\CheckoutCartCommand;
+use Siroko\Cart\Application\Command\Cart\DeliverCartCommand;
 use Siroko\Cart\Domain\CommandBus\CommandBusWrite;
 use Siroko\Cart\Infrastructure\Api\ApiExceptionMapper;
 use Symfony\Component\HttpFoundation\JsonResponse;
 
 /**
- * PUT /v1/carts/{id}/checkout - routed by CartResource.
- *
- * Answers `{"cart": ..., "order": ...}`: the paid cart and the order placed
- * for it. The cart alone used to be the whole answer, which left the client
- * with a paid cart and no record of what had been captured.
+ * PUT /v1/carts/{id}/deliver - routed by CartResource.
  */
-final class CheckoutCartController
+final class DeliverCartController
 {
     public function __construct(
         private readonly CommandBusWrite $commandBus,
@@ -27,7 +23,7 @@ final class CheckoutCartController
     {
         try {
             $cart = $this->commandBus->handle(
-                new CheckoutCartCommand($id),
+                new DeliverCartCommand($id),
             );
 
             return new JsonResponse($cart);
