@@ -15,6 +15,13 @@ class Product
 {
     private Quantity $quantity;
 
+    /**
+     * When the product was withdrawn from the catalogue. A withdrawn product
+     * keeps its row: cart lines and order snapshots still point at it, and its
+     * code stays taken.
+     */
+    private ?\DateTimeImmutable $deletedAt = null;
+
     public function __construct(
         private ProductId $id,
         private ProductCode $code,
@@ -35,9 +42,19 @@ class Product
         return $this->code;
     }
 
+    public function recode(ProductCode $code): void
+    {
+        $this->code = $code;
+    }
+
     public function name(): Name
     {
         return $this->name;
+    }
+
+    public function rename(Name $name): void
+    {
+        $this->name = $name;
     }
 
     public function setPrice(Price $price): void
@@ -58,5 +75,24 @@ class Product
     public function setQuantity(Quantity $quantity): void
     {
         $this->quantity = $quantity;
+    }
+
+    public function deletedAt(): ?\DateTimeImmutable
+    {
+        return $this->deletedAt;
+    }
+
+    public function isDeleted(): bool
+    {
+        return null !== $this->deletedAt;
+    }
+
+    /**
+     * Withdraws the product from the catalogue. Idempotent: the first
+     * withdrawal date stands.
+     */
+    public function delete(\DateTimeImmutable $at): void
+    {
+        $this->deletedAt ??= $at;
     }
 }

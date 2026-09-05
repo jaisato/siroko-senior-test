@@ -9,7 +9,9 @@ use Ramsey\Uuid\Uuid;
 use Siroko\Cart\Application\Query\Product\GetProductListQuery;
 use Siroko\Cart\Application\Query\Product\GetProductListQueryHandler;
 use Siroko\Cart\Domain\Entity\Product;
+use Siroko\Cart\Domain\Repository\ProductCriteria;
 use Siroko\Cart\Domain\Repository\ProductRepository;
+use Siroko\Cart\Domain\Repository\ProductSort;
 use Siroko\Cart\Domain\ValueObject\Name;
 use Siroko\Cart\Domain\ValueObject\Price;
 use Siroko\Cart\Domain\ValueObject\ProductCode;
@@ -24,7 +26,7 @@ final class GetProductListQueryHandlerTest extends TestCase
 
         $collection = $handler(new GetProductListQuery(2, 2));
 
-        self::assertSame([2, 2], $asked, 'the repository is asked for exactly that page');
+        self::assertSame([2, 2, ProductCriteria::all()->sort], $asked, 'the repository is asked for exactly that page, unfiltered');
         self::assertSame(['Apple', 'Banana'], array_map(static fn($p) => $p->name, $collection->products));
         self::assertSame(2, $collection->page);
         self::assertSame(2, $collection->pageSize);
@@ -44,6 +46,20 @@ final class GetProductListQueryHandlerTest extends TestCase
         self::assertSame(0, $collection->total);
         self::assertSame(0, $collection->pages);
         self::assertSame('{"products":[],"page":1,"pageSize":20,"total":0,"pages":0}', json_encode($collection, \JSON_THROW_ON_ERROR));
+    }
+
+    /** Filters travel with the query to the repository, and the total counts what matches them. */
+    public function test_the_criteria_reach_the_repository(): void
+    {
+        $asked = null;
+        $criteria = ProductCriteria::of('gafas', '10', null, true, '-price');
+        $handler = new GetProductListQueryHandler($this->products([$this->product('Gafas')], total: 1, asked: $asked, expectedCriteria: $criteria));
+
+        $collection = $handler(new GetProductListQuery(1, 20, $criteria));
+
+        self::assertSame([1, 20, ProductSort::PriceDesc], $asked);
+        self::assertSame(1, $collection->total);
+        self::assertSame(1, $collection->pages);
     }
 
     public function test_the_query_refuses_pages_before_the_first(): void
@@ -70,18 +86,27 @@ final class GetProductListQueryHandlerTest extends TestCase
     }
 
     /**
-     * @param list<Product>        $page
-     * @param array{int, int}|null $asked
+     * @param list<Product>                     $page
+     * @param array{int, int, ProductSort}|null $asked
      */
-    private function products(array $page, int $total, ?array &$asked): ProductRepository
+    private function products(array $page, int $total, ?array &$asked, ?ProductCriteria $expectedCriteria = null): ProductRepository
     {
         $products = $this->createStub(ProductRepository::class);
-        $products->method('findAll')->willReturnCallback(static function (int $pageNumber, int $pageSize) use ($page, &$asked): array {
-            $asked = [$pageNumber, $pageSize];
+        $products->method('search')->willReturnCallback(static function (ProductCriteria $criteria, int $pageNumber, int $pageSize) use ($page, &$asked, $expectedCriteria): array {
+            if (null !== $expectedCriteria) {
+                self::assertSame($expectedCriteria, $criteria);
+            }
+            $asked = [$pageNumber, $pageSize, $criteria->sort];
 
             return $page;
         });
-        $products->method('countAll')->willReturn($total);
+        $products->method('countMatching')->willReturnCallback(static function (ProductCriteria $criteria) use ($total, $expectedCriteria): int {
+            if (null !== $expectedCriteria) {
+                self::assertSame($expectedCriteria, $criteria);
+            }
+
+            return $total;
+        });
 
         return $products;
     }

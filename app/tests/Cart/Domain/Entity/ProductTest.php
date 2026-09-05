@@ -46,4 +46,32 @@ final class ProductTest extends TestCase
         self::assertSame('2.50', $product->price()->amount());
         self::assertSame(9, $product->quantity()->asInt());
     }
+
+    public function test_name_and_code_can_change(): void
+    {
+        $product = new Product(ProductId::fromString(Uuid::uuid4()->toString()), ProductCode::fromString('K3'), Name::fromString('Gafas'), Price::of('1', 'EUR'));
+
+        $product->rename(Name::fromString('Gafas Siroko K3'));
+        $product->recode(ProductCode::fromString('K3-BLACK'));
+
+        self::assertSame('Gafas Siroko K3', $product->name()->toString());
+        self::assertSame('K3-BLACK', $product->code()->toString());
+    }
+
+    /** A withdrawn product keeps its row and its first withdrawal date. */
+    public function test_a_product_can_be_withdrawn_once(): void
+    {
+        $product = new Product(ProductId::fromString(Uuid::uuid4()->toString()), ProductCode::fromString('K3'), Name::fromString('Gafas'), Price::of('1', 'EUR'));
+        $first = new \DateTimeImmutable('2026-09-06 10:00:00', new \DateTimeZone('UTC'));
+
+        self::assertFalse($product->isDeleted());
+        self::assertNull($product->deletedAt());
+
+        $product->delete($first);
+        $product->delete($first->modify('+1 day'));
+
+        self::assertTrue($product->isDeleted());
+        self::assertSame($first, $product->deletedAt(), 'the first withdrawal stands');
+        self::assertSame('K3', $product->code()->toString(), 'the code stays taken');
+    }
 }

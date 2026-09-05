@@ -8,6 +8,7 @@ use Doctrine\DBAL\Exception\UniqueConstraintViolationException;
 use Doctrine\ORM\EntityManagerInterface;
 use Ramsey\Uuid\Uuid;
 use Siroko\Cart\Domain\Entity\Product;
+use Siroko\Cart\Domain\Repository\ProductCriteria;
 use Siroko\Cart\Domain\Repository\ProductRepository;
 use Siroko\Cart\Domain\ValueObject\Name;
 use Siroko\Cart\Domain\ValueObject\Price;
@@ -164,6 +165,98 @@ final class DoctrineProductRepositoryTest extends KernelTestCase
     {
         self::assertSame(0, $this->repository->countAll());
         self::assertSame([], $this->repository->findAll(1, 20));
+    }
+
+    public function test_a_product_is_found_by_its_code(): void
+    {
+        $product = $this->product(code: 'K3');
+
+        self::assertTrue($product->id()->equals($this->repository->ofCode(ProductCode::fromString('K3'))?->id() ?? ProductId::fromString(Uuid::uuid4()->toString())));
+        self::assertNull($this->repository->ofCode(ProductCode::fromString('NOPE')));
+    }
+
+    public function test_a_product_can_be_loaded_with_its_row_locked(): void
+    {
+        $product = $this->product();
+
+        $locked = $this->em->wrapInTransaction(fn() => $this->repository->ofIdForUpdate($product->id()));
+
+        self::assertInstanceOf(Product::class, $locked);
+        self::assertTrue($product->id()->equals($locked->id()));
+    }
+
+    /** A withdrawn product keeps its row but is invisible to every catalogue read. */
+    public function test_a_withdrawn_product_is_not_found_by_id_code_or_listing_but_its_row_stays(): void
+    {
+        $product = $this->product('Gone', code: 'GONE');
+        $product->delete(new \DateTimeImmutable());
+        $this->repository->save($product);
+        $this->em->clear();
+
+        self::assertNull($this->repository->ofId($product->id()));
+        self::assertNull($this->repository->ofCode(ProductCode::fromString('GONE')));
+        self::assertSame(0, $this->repository->countAll());
+        self::assertSame([], $this->repository->findAll(1, 10));
+        self::assertTrue($this->repository->existsWithCode(ProductCode::fromString('GONE')), 'the code stays taken');
+        self::assertFalse($this->repository->setStock($product->id(), new Quantity(5)), 'no recount for a withdrawn product');
+
+        $row = $this->em->find(Product::class, $product->id());
+        self::assertInstanceOf(Product::class, $row);
+        self::assertTrue($row->isDeleted());
+    }
+
+    public function test_exists_with_code_can_leave_one_product_out(): void
+    {
+        $product = $this->product(code: 'MINE');
+
+        self::assertTrue($this->repository->existsWithCode(ProductCode::fromString('MINE')));
+        self::assertFalse($this->repository->existsWithCode(ProductCode::fromString('MINE'), $product->id()), 'its own code is not a clash');
+        self::assertTrue($this->repository->existsWithCode(ProductCode::fromString('MINE'), ProductId::fromString(Uuid::uuid4()->toString())));
+    }
+
+    public function test_set_stock_replaces_the_available_units_and_refreshes_the_entity(): void
+    {
+        $product = $this->product(stock: 5);
+
+        self::assertTrue($this->repository->setStock($product->id(), new Quantity(42)));
+
+        self::assertSame(42, $product->quantity()->asInt());
+        self::assertSame(42, $this->stockInDatabase($product));
+        self::assertFalse($this->repository->setStock(ProductId::fromString(Uuid::uuid4()->toString()), new Quantity(1)));
+    }
+
+    public function test_search_filters_by_text_price_and_stock_and_sorts(): void
+    {
+        $this->product('Gafas de sol', 'K3', '129.95', 3);
+        $this->product('Funda de gafas', 'F1', '9.99', 0);
+        $this->product('Casco', 'H1', '59.00', 8);
+
+        self::assertSame(['Funda de gafas', 'Gafas de sol'], self::names($this->repository->search(ProductCriteria::of('GAFAS'), 1, 10)));
+        self::assertSame(2, $this->repository->countMatching(ProductCriteria::of('gafas')));
+        self::assertSame(['Gafas de sol'], self::names($this->repository->search(ProductCriteria::of('k3'), 1, 10)), 'the code is searched too');
+        self::assertSame(['Casco', 'Gafas de sol'], self::names($this->repository->search(ProductCriteria::of(minPrice: '10'), 1, 10)));
+        self::assertSame(['Funda de gafas'], self::names($this->repository->search(ProductCriteria::of(maxPrice: '9.99'), 1, 10)), 'bounds are inclusive');
+        self::assertSame(['Casco', 'Gafas de sol'], self::names($this->repository->search(ProductCriteria::of(inStock: true), 1, 10)));
+        self::assertSame(['Funda de gafas'], self::names($this->repository->search(ProductCriteria::of(inStock: false), 1, 10)));
+        self::assertSame(['Gafas de sol', 'Casco', 'Funda de gafas'], self::names($this->repository->search(ProductCriteria::of(sort: '-price'), 1, 10)));
+        self::assertSame(['Funda de gafas', 'Casco', 'Gafas de sol'], self::names($this->repository->search(ProductCriteria::of(sort: 'price'), 1, 10)));
+        self::assertSame(['Funda de gafas', 'Casco', 'Gafas de sol'], self::names($this->repository->search(ProductCriteria::of(sort: 'code'), 1, 10)));
+        self::assertSame(['Gafas de sol', 'Funda de gafas'], self::names($this->repository->search(ProductCriteria::of(sort: '-name', minPrice: '1', maxPrice: '200', inStock: null, text: 'gafas'), 1, 10)), 'filters combine');
+        self::assertSame(['Casco'], self::names($this->repository->search(ProductCriteria::of(sort: '-price'), 2, 1)), 'pages follow the order');
+    }
+
+    /** `%` and `_` in the search text are escaped, and the escape character is declared. */
+    public function test_search_treats_like_wildcards_as_literal_text(): void
+    {
+        $this->product('100% cotton', 'C1');
+        $this->product('100 cotton', 'C2');
+        $this->product('a_b', 'U1');
+        $this->product('axb', 'U2');
+        $this->product('bang!', 'E1');
+
+        self::assertSame(['100% cotton'], self::names($this->repository->search(ProductCriteria::of('100%'), 1, 10)));
+        self::assertSame(['a_b'], self::names($this->repository->search(ProductCriteria::of('a_b'), 1, 10)));
+        self::assertSame(['bang!'], self::names($this->repository->search(ProductCriteria::of('g!'), 1, 10)), 'the escape character itself is escaped');
     }
 
     public function test_next_identity_is_a_fresh_uuid(): void

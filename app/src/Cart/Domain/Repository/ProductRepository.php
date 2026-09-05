@@ -7,21 +7,43 @@ namespace Siroko\Cart\Domain\Repository;
 use Siroko\Cart\Domain\Entity\Product;
 use Siroko\Cart\Domain\ValueObject\ProductCode;
 use Siroko\Cart\Domain\ValueObject\ProductId;
+use Siroko\Cart\Domain\ValueObject\Quantity;
 
+/**
+ * Products withdrawn from the catalogue (soft-deleted) are invisible to every
+ * read here except through the associations that already hold them (cart
+ * lines, order snapshots); writing through save() is how they are withdrawn.
+ */
 interface ProductRepository
 {
     public function nextIdentity(): ProductId;
 
     public function save(Product $product): void;
 
+    /**
+     * A product in the catalogue; null for an unknown or withdrawn id.
+     */
     public function ofId(ProductId $id): ?Product;
 
     /**
-     * Whether a product already carries this code. The database enforces the
+     * Like ofId(), with the row locked for a write that depends on the
+     * product's current state. Requires an open transaction.
+     */
+    public function ofIdForUpdate(ProductId $id): ?Product;
+
+    /**
+     * A product in the catalogue by its code; null for an unknown or withdrawn code.
+     */
+    public function ofCode(ProductCode $code): ?Product;
+
+    /**
+     * Whether a product already carries this code - withdrawn ones included,
+     * since a code stays taken. `$except` leaves one product out, for a product
+     * keeping its own code through an update. The database enforces the
      * uniqueness as well; this is the check that lets the handler answer with
      * a domain exception instead of a driver error.
      */
-    public function existsWithCode(ProductCode $code): bool;
+    public function existsWithCode(ProductCode $code, ?ProductId $except = null): bool;
 
     /**
      * Devuelve unidades al stock de forma atómica.
@@ -63,7 +85,16 @@ interface ProductRepository
     public function reserveStock(ProductId $id, int $units): bool;
 
     /**
-     * One page of the catalogue, ordered by name.
+     * Sets the available stock to an exact figure, in one UPDATE. Used by the
+     * catalogue (a recount), never by the cart, whose movements are relative.
+     *
+     * @return bool false when no such product is in the catalogue
+     */
+    public function setStock(ProductId $id, Quantity $quantity): bool;
+
+    /**
+     * One page of the catalogue, ordered by name. Equivalent to
+     * search(ProductCriteria::all(), ...).
      *
      * @param positive-int $pageNumber 1-based
      * @param positive-int $pageSize
@@ -76,4 +107,19 @@ interface ProductRepository
      * @return int<0, max>
      */
     public function countAll(): int;
+
+    /**
+     * One page of the products matching the criteria, in its order.
+     *
+     * @param positive-int $pageNumber 1-based
+     * @param positive-int $pageSize
+     *
+     * @return list<Product>
+     */
+    public function search(ProductCriteria $criteria, int $pageNumber, int $pageSize): array;
+
+    /**
+     * @return int<0, max>
+     */
+    public function countMatching(ProductCriteria $criteria): int;
 }
