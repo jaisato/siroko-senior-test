@@ -66,7 +66,7 @@ final class ChangeCartItemQuantityCommandHandlerTest extends TestCase
 
         self::assertSame(5, $item->quantity()->asInt());
         self::assertSame([['reserve', $product->id()->toString(), 3]], $this->movements);
-        self::assertSame(5, array_values($read->items)[0]->quantity);
+        self::assertSame(5, $read->items[0]->quantity);
     }
 
     public function test_shrinking_a_line_returns_the_surplus_units_only(): void

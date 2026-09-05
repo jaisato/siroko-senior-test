@@ -4,13 +4,16 @@ declare(strict_types=1);
 
 namespace Siroko\Cart\Domain\Entity;
 
+use Brick\Money\Currency;
 use Doctrine\Common\Collections\ArrayCollection;
 use Doctrine\Common\Collections\Collection;
 use Siroko\Cart\Domain\Exception\InvalidCartStatusException;
 use Siroko\Cart\Domain\Exception\InvalidQuantityException;
+use Siroko\Cart\Domain\Exception\PriceIsNotSameCurrencyException;
 use Siroko\Cart\Domain\ValueObject\CartId;
 use Siroko\Cart\Domain\ValueObject\CartStatus;
 use Siroko\Cart\Domain\ValueObject\ItemId;
+use Siroko\Cart\Domain\ValueObject\Price;
 use Siroko\Cart\Domain\ValueObject\ProductId;
 use Siroko\Cart\Domain\ValueObject\Quantity;
 
@@ -90,11 +93,13 @@ class Cart
      * they went.
      *
      * @throws InvalidCartStatusException
-     * @throws InvalidQuantityException   when the line would exceed CartItem::MAX_QUANTITY
+     * @throws InvalidQuantityException        when the line would exceed CartItem::MAX_QUANTITY
+     * @throws PriceIsNotSameCurrencyException when the product is priced in another currency than the cart
      */
     public function addProduct(ItemId $newLineId, Product $product, Quantity $units): CartItem
     {
         $this->ensurePending();
+        $this->ensureSameCurrency($product);
 
         $line = $this->itemForProduct($product->id());
 
@@ -117,7 +122,8 @@ class Cart
      * one, so the "one line per product" rule holds however the line arrives.
      *
      * @throws InvalidCartStatusException
-     * @throws InvalidQuantityException   when the merged line would exceed CartItem::MAX_QUANTITY
+     * @throws InvalidQuantityException        when the merged line would exceed CartItem::MAX_QUANTITY
+     * @throws PriceIsNotSameCurrencyException when the product is priced in another currency than the cart
      */
     public function addItem(CartItem $item): void
     {
@@ -126,6 +132,8 @@ class Cart
         if ($this->items->contains($item)) {
             return;
         }
+
+        $this->ensureSameCurrency($item->getProduct());
 
         $line = $this->itemForProduct($item->getProduct()->id());
 
@@ -137,6 +145,62 @@ class Cart
 
         $this->items->add($item);
         $item->setCart($this);
+    }
+
+    /**
+     * The currency every line is priced in; null while the cart is empty. A
+     * cart never mixes currencies (see ensureSameCurrency()), so the first line
+     * speaks for all of them.
+     */
+    public function currency(): ?Currency
+    {
+        $first = $this->items->first();
+
+        return $first instanceof CartItem ? $first->getProduct()->price()->currency() : null;
+    }
+
+    /**
+     * Units across every line.
+     *
+     * @return int<0, max>
+     */
+    public function itemCount(): int
+    {
+        $count = 0;
+
+        foreach ($this->items as $item) {
+            $count += $item->quantity()->asInt();
+        }
+
+        return max(0, $count);
+    }
+
+    /**
+     * Sum of the line totals; null while the cart is empty, since an amount
+     * without a currency is not a price.
+     *
+     * @throws PriceIsNotSameCurrencyException if the lines somehow ended up in two currencies
+     */
+    public function subtotal(): ?Price
+    {
+        $subtotal = null;
+
+        foreach ($this->items as $item) {
+            $subtotal = null === $subtotal ? $item->total() : $subtotal->add($item->total());
+        }
+
+        return $subtotal;
+    }
+
+    /**
+     * What the customer pays. Equal to the subtotal until the day taxes or
+     * discounts exist; kept apart so that day changes one method, not the API.
+     *
+     * @throws PriceIsNotSameCurrencyException
+     */
+    public function total(): ?Price
+    {
+        return $this->subtotal();
     }
 
     /**
@@ -172,6 +236,22 @@ class Cart
     {
         if (!$this->status->isPending()) {
             throw new InvalidCartStatusException('Cart is not pending');
+        }
+    }
+
+    /**
+     * A cart is paid in one currency. Lines in two currencies have no total,
+     * so the mix is refused when the line arrives rather than discovered when
+     * the cart is read or checked out.
+     *
+     * @throws PriceIsNotSameCurrencyException
+     */
+    private function ensureSameCurrency(Product $product): void
+    {
+        $currency = $this->currency();
+
+        if (null !== $currency && $currency->getCurrencyCode() !== $product->price()->currency()->getCurrencyCode()) {
+            throw new PriceIsNotSameCurrencyException(\sprintf('The cart is priced in %s; a product priced in %s cannot be added to it.', $currency->getCurrencyCode(), $product->price()->currency()->getCurrencyCode()));
         }
     }
 }

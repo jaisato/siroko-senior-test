@@ -64,7 +64,7 @@ final class CreateCartCommandHandlerTest extends TestCase
         self::assertTrue(Uuid::isValid($read->id));
         self::assertSame(CartStatus::PENDING, $read->status);
         self::assertCount(1, $read->items);
-        self::assertSame(3, array_values($read->items)[0]->quantity);
+        self::assertSame(3, $read->items[0]->quantity);
         self::assertSame([$product->id()->toString() => 3], $units, 'all three units were reserved at once');
         self::assertSame(['begin', 'saveCart', 'commit'], $this->session->log, 'reservations and the cart share one transaction');
     }
@@ -82,7 +82,7 @@ final class CreateCartCommandHandlerTest extends TestCase
         ]));
 
         self::assertCount(1, $read->items);
-        self::assertSame(5, array_values($read->items)[0]->quantity);
+        self::assertSame(5, $read->items[0]->quantity);
         self::assertSame([$product->id()->toString(), $product->id()->toString()], $this->reserved, 'each line reserved its own units');
     }
 

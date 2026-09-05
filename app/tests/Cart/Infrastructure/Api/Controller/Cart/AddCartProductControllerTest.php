@@ -97,6 +97,22 @@ final class AddCartProductControllerTest extends ApiTestCase
         self::assertSame(5, $this->stockOf($product));
     }
 
+    /** A cart is paid in one currency; a product in another has no place in its total. */
+    public function test_a_product_in_another_currency_is_a_409_problem_and_reserves_nothing(): void
+    {
+        $cart = $this->persistCart(CartStatus::PENDING, $this->persistProduct('Euros', currency: 'EUR'));
+        $dollars = $this->persistProduct('Dollars', currency: 'USD', stock: 3);
+
+        $this->request('PUT', $this->url('api_add_cart_product_by_id', [
+            'cartId' => $cart->id()->toString(),
+            'productId' => $dollars->id()->toString(),
+        ]));
+
+        $this->assertProblem(409, 'USD');
+        self::assertSame(3, $this->stockOf($dollars));
+        self::assertCount(1, $this->reloadCart($cart)->items());
+    }
+
     public function test_an_unknown_cart_is_a_404_problem(): void
     {
         $product = $this->persistProduct();
