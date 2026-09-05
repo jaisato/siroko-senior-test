@@ -24,14 +24,37 @@ final class GetCartControllerTest extends ApiTestCase
         self::assertIsArray($body['items']);
         self::assertCount(2, $body['items']);
 
-        foreach ($body['items'] as $itemId => $item) {
-            self::assertSame($itemId, $item['id'], 'items are keyed by their id');
+        self::assertSame([0, 1], array_keys($body['items']), 'the lines are a list');
+
+        foreach ($body['items'] as $item) {
+            self::assertArrayHasKey('id', $item);
             self::assertArrayHasKey('name', $item);
             self::assertArrayHasKey('code', $item);
             self::assertArrayHasKey('productId', $item);
             self::assertSame("19,99\u{a0}€", $item['price']);
             self::assertSame(1, $item['quantity']);
         }
+    }
+
+    public function test_the_cart_adds_up_its_lines(): void
+    {
+        $cart = $this->persistCartWithLines(CartStatus::PENDING, [
+            [$this->persistProduct('Gafas', amount: '129.95'), 2],
+            [$this->persistProduct('Funda', amount: '9.99'), 1],
+        ]);
+
+        $this->request('GET', $this->url('api_get_cart_by_id', ['id' => $cart->id()->toString()]));
+
+        $body = $this->json();
+        self::assertSame(3, $body['itemCount']);
+        self::assertSame('EUR', $body['currency']);
+        self::assertSame(['amount' => '269.89', 'currency' => 'EUR'], $body['subtotal']);
+        self::assertSame(['amount' => '269.89', 'currency' => 'EUR'], $body['total']);
+
+        $lines = array_column($body['items'], 'lineTotal', 'name');
+        self::assertSame(['amount' => '259.90', 'currency' => 'EUR'], $lines['Gafas']);
+        self::assertSame(['amount' => '9.99', 'currency' => 'EUR'], $lines['Funda']);
+        self::assertSame(['amount' => '129.95', 'currency' => 'EUR'], array_column($body['items'], 'unitPrice', 'name')['Gafas']);
     }
 
     public function test_a_line_reports_how_many_units_it_holds(): void
@@ -90,6 +113,12 @@ final class GetCartControllerTest extends ApiTestCase
         $this->request('GET', $this->url('api_get_cart_by_id', ['id' => $cart->id()->toString()]));
 
         self::assertResponseStatusCodeSame(200);
-        self::assertSame([], $this->json()['items']);
+        $body = $this->json();
+        self::assertSame([], $body['items']);
+        self::assertSame(0, $body['itemCount']);
+        self::assertNull($body['currency']);
+        self::assertNull($body['subtotal']);
+        self::assertNull($body['total']);
+        self::assertStringContainsString('"items":[]', (string) $this->client->getResponse()->getContent(), 'an empty list, not an empty object');
     }
 }

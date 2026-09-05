@@ -66,13 +66,15 @@ final class ApiExceptionMapper
         InvalidCartStatusException::class => Response::HTTP_CONFLICT,
         OutOfStockException::class => Response::HTTP_CONFLICT,
         DuplicateProductCodeException::class => Response::HTTP_CONFLICT,
+        // The request is well formed; it clashes with the currency the cart
+        // already holds, which is the cart's state, hence a conflict.
+        PriceIsNotSameCurrencyException::class => Response::HTTP_CONFLICT,
         InvalidCartLineException::class => Response::HTTP_BAD_REQUEST,
         InvalidIdentifierException::class => Response::HTTP_BAD_REQUEST,
         InvalidPriceException::class => Response::HTTP_BAD_REQUEST,
         InvalidQuantityException::class => Response::HTTP_BAD_REQUEST,
         InvalidProductCodeException::class => Response::HTTP_BAD_REQUEST,
         NameInvalidLengthException::class => Response::HTTP_BAD_REQUEST,
-        PriceIsNotSameCurrencyException::class => Response::HTTP_BAD_REQUEST,
     ];
 
     public function __construct(private readonly ?LoggerInterface $logger = null) {}

@@ -41,8 +41,9 @@ final class GetCartByIdQueryHandlerTest extends TestCase
 
         self::assertSame($cart->id()->toString(), $read->id);
         self::assertSame(CartStatus::PENDING, $read->status);
-        self::assertArrayHasKey($item->id()->toString(), $read->items);
-        self::assertSame('Gafas', $read->items[$item->id()->toString()]->name);
+        self::assertCount(1, $read->items);
+        self::assertSame($item->id()->toString(), $read->items[0]->id);
+        self::assertSame('Gafas', $read->items[0]->name);
     }
 
     /**

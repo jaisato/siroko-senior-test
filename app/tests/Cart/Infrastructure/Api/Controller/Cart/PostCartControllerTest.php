@@ -65,6 +65,39 @@ final class PostCartControllerTest extends ApiTestCase
         self::assertSame(2, $this->stockOf($product));
     }
 
+    public function test_products_in_two_currencies_are_a_409_problem_and_nothing_is_reserved(): void
+    {
+        $euros = $this->persistProduct('Euros', currency: 'EUR', stock: 5);
+        $dollars = $this->persistProduct('Dollars', currency: 'USD', stock: 5);
+
+        $this->request('POST', $this->url('api_create_cart'), [
+            'products' => [
+                ['productId' => $euros->id()->toString(), 'quantity' => 1],
+                ['productId' => $dollars->id()->toString(), 'quantity' => 1],
+            ],
+        ]);
+
+        $this->assertProblem(409, 'priced in EUR');
+        self::assertSame(5, $this->stockOf($euros), 'the whole request rolled back');
+        self::assertSame(5, $this->stockOf($dollars));
+    }
+
+    public function test_the_created_cart_carries_its_totals(): void
+    {
+        $product = $this->persistProduct('Gafas', amount: '129.95', stock: 5);
+
+        $this->request('POST', $this->url('api_create_cart'), [
+            'products' => [['productId' => $product->id()->toString(), 'quantity' => 2]],
+        ]);
+
+        self::assertResponseStatusCodeSame(201);
+        $cart = $this->json();
+        self::assertSame(2, $cart['itemCount']);
+        self::assertSame('EUR', $cart['currency']);
+        self::assertSame(['amount' => '259.90', 'currency' => 'EUR'], $cart['subtotal']);
+        self::assertSame(['amount' => '259.90', 'currency' => 'EUR'], $cart['total']);
+    }
+
     public function test_an_empty_body_is_a_400_problem(): void
     {
         $this->request('POST', $this->url('api_create_cart'), '');

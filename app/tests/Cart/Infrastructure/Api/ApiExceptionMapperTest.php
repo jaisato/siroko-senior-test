@@ -69,7 +69,7 @@ final class ApiExceptionMapperTest extends TestCase
         yield 'bad quantity' => [new InvalidQuantityException('Quantity must be an integer.'), 400];
         yield 'bad code' => [new InvalidProductCodeException('too long'), 400];
         yield 'bad name' => [new NameInvalidLengthException('too short'), 400];
-        yield 'currency mismatch' => [new PriceIsNotSameCurrencyException('mismatch'), 400];
+        yield 'currency mismatch' => [new PriceIsNotSameCurrencyException('mismatch'), 409];
     }
 
     public function test_http_exceptions_keep_their_status_message_and_headers(): void

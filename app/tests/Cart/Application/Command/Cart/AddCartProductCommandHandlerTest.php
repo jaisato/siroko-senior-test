@@ -206,7 +206,7 @@ final class AddCartProductCommandHandlerTest extends TestCase
 
         self::assertSame([[$product->id()->toString(), 4]], $reserved);
         self::assertCount(1, $this->cart->items());
-        self::assertSame(4, array_values($read->items)[0]->quantity);
+        self::assertSame(4, $read->items[0]->quantity);
     }
 
     /**
@@ -227,7 +227,7 @@ final class AddCartProductCommandHandlerTest extends TestCase
         self::assertCount(1, $this->cart->items(), 'no second line for the same product');
         self::assertSame(5, $existing->quantity()->asInt());
         self::assertSame([[$product->id()->toString(), 3]], $reserved, 'only the new units were reserved');
-        self::assertSame([$existing->id()->toString()], array_keys($read->items));
+        self::assertSame($existing->id()->toString(), $read->items[0]->id);
     }
 
     /** The per-line cap is a rule of the line; the request over it is a 400, and nothing is kept. */

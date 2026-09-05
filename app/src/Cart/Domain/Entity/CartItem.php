@@ -6,6 +6,7 @@ namespace Siroko\Cart\Domain\Entity;
 
 use Siroko\Cart\Domain\Exception\InvalidQuantityException;
 use Siroko\Cart\Domain\ValueObject\ItemId;
+use Siroko\Cart\Domain\ValueObject\Price;
 use Siroko\Cart\Domain\ValueObject\Quantity;
 
 /**
@@ -126,6 +127,14 @@ class CartItem
         $this->quantity = self::lineQuantity($quantity);
 
         return $delta;
+    }
+
+    /**
+     * Unit price times units, in the product's currency.
+     */
+    public function total(): Price
+    {
+        return $this->product->price()->multiply($this->quantity->asInt());
     }
 
     /**

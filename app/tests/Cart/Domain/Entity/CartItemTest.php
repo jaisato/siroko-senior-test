@@ -122,6 +122,20 @@ final class CartItemTest extends TestCase
         self::assertSame(2, $item->quantity()->asInt(), 'a refused change leaves the line as it was');
     }
 
+    public function test_a_line_total_is_the_unit_price_times_the_units(): void
+    {
+        $product = new Product(
+            ProductId::fromString(Uuid::uuid4()->toString()),
+            ProductCode::fromString('SKU'),
+            Name::fromString('A product'),
+            Price::of('19.99', 'EUR'),
+        );
+        $item = new CartItem(ItemId::fromString(Uuid::uuid4()->toString()), $product, new Quantity(3));
+
+        self::assertTrue(Price::of('59.97', 'EUR')->equals($item->total()));
+        self::assertSame(['amount' => '59.97', 'currency' => 'EUR'], $item->total()->jsonSerialize());
+    }
+
     public function test_the_product_can_be_replaced(): void
     {
         $item = new CartItem(ItemId::fromString(Uuid::uuid4()->toString()), self::product());

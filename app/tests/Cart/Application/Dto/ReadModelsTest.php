@@ -92,7 +92,11 @@ final class ReadModelsTest extends TestCase
         self::assertSame(3, CartItemRead::fromModel(new CartItem(ItemId::fromString(Uuid::uuid4()->toString()), self::product(), new Quantity(3)))->quantity);
     }
 
-    public function test_cart_read_keys_the_lines_by_item_id(): void
+    /**
+     * The lines are a list. Keyed by id they serialised as an object, and an
+     * empty cart as `{}`: two shapes for one field.
+     */
+    public function test_cart_read_lists_the_lines_in_cart_order(): void
     {
         $cart = new Cart(CartId::fromString(Uuid::uuid4()->toString()), CartStatus::pending());
         $first = new CartItem(ItemId::fromString(Uuid::uuid4()->toString()), self::product('First'));
@@ -105,8 +109,29 @@ final class ReadModelsTest extends TestCase
 
         self::assertSame($cart->id()->toString(), $read->id);
         self::assertSame(CartStatus::PAID, $read->status);
-        self::assertSame([$first->id()->toString(), $second->id()->toString()], array_keys($read->items));
-        self::assertSame('Second', $read->items[$second->id()->toString()]->name);
+        self::assertSame([0, 1], array_keys($read->items));
+        self::assertSame([$first->id()->toString(), $second->id()->toString()], array_map(static fn(CartItemRead $line): string => $line->id, $read->items));
+        self::assertSame('Second', $read->items[1]->name);
+    }
+
+    public function test_cart_read_adds_up_the_lines(): void
+    {
+        $cart = new Cart(CartId::fromString(Uuid::uuid4()->toString()), CartStatus::pending());
+        $cart->addItem(new CartItem(ItemId::fromString(Uuid::uuid4()->toString()), self::product('Gafas', 'K3', '129.95'), new Quantity(2)));
+        $cart->addItem(new CartItem(ItemId::fromString(Uuid::uuid4()->toString()), self::product('Funda', 'F1', '9.99'), new Quantity(1)));
+
+        $read = CartRead::fromModel($cart);
+
+        self::assertSame(3, $read->itemCount);
+        self::assertSame('EUR', $read->currency);
+        self::assertSame(['amount' => '269.89', 'currency' => 'EUR'], $read->subtotal);
+        self::assertSame(['amount' => '269.89', 'currency' => 'EUR'], $read->total, 'no taxes or discounts yet');
+        self::assertSame(['amount' => '259.90', 'currency' => 'EUR'], $read->items[0]->lineTotal);
+        self::assertSame(['amount' => '129.95', 'currency' => 'EUR'], $read->items[0]->unitPrice);
+        self::assertSame(
+            ['itemCount' => 3, 'currency' => 'EUR', 'subtotal' => ['amount' => '269.89', 'currency' => 'EUR']],
+            array_intersect_key(json_decode(json_encode($read, \JSON_THROW_ON_ERROR), true), ['itemCount' => 1, 'currency' => 1, 'subtotal' => 1]),
+        );
     }
 
     public function test_an_empty_cart_reads_as_an_empty_item_list(): void
@@ -115,6 +140,11 @@ final class ReadModelsTest extends TestCase
 
         self::assertSame([], $read->items);
         self::assertSame(CartStatus::PENDING, $read->status);
+        self::assertSame(0, $read->itemCount);
+        self::assertNull($read->currency, 'no lines, no currency');
+        self::assertNull($read->subtotal, 'an amount without a currency is not a price');
+        self::assertNull($read->total);
+        self::assertSame('[]', json_encode($read->items), 'an empty list, never an empty object');
     }
 
     private static function product(string $name = 'A product', string $code = 'SKU', string $amount = '10.00', int $stock = 1): Product

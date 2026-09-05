@@ -10,6 +10,7 @@ use Siroko\Cart\Domain\Entity\Cart;
 use Siroko\Cart\Domain\Entity\CartItem;
 use Siroko\Cart\Domain\Entity\Product;
 use Siroko\Cart\Domain\Exception\InvalidCartStatusException;
+use Siroko\Cart\Domain\Exception\PriceIsNotSameCurrencyException;
 use Siroko\Cart\Domain\ValueObject\CartId;
 use Siroko\Cart\Domain\ValueObject\CartStatus;
 use Siroko\Cart\Domain\ValueObject\ItemId;
@@ -201,6 +202,60 @@ final class CartTest extends TestCase
         self::assertNull($cart->itemForProduct(ProductId::fromString(Uuid::uuid4()->toString())));
     }
 
+    public function test_an_empty_cart_has_no_currency_and_no_total(): void
+    {
+        $cart = self::cart();
+
+        self::assertNull($cart->currency());
+        self::assertNull($cart->subtotal());
+        self::assertNull($cart->total());
+        self::assertSame(0, $cart->itemCount());
+    }
+
+    public function test_the_cart_adds_up_its_lines(): void
+    {
+        $cart = self::cart();
+        $cart->addProduct(ItemId::fromString(Uuid::uuid4()->toString()), self::product('129.95'), new Quantity(2));
+        $cart->addProduct(ItemId::fromString(Uuid::uuid4()->toString()), self::product('9.99'), new Quantity(1));
+
+        self::assertSame('EUR', $cart->currency()?->getCurrencyCode());
+        self::assertSame(3, $cart->itemCount());
+        self::assertTrue(Price::of('269.89', 'EUR')->equals($cart->subtotal() ?? Price::zero('EUR')));
+        self::assertTrue(Price::of('269.89', 'EUR')->equals($cart->total() ?? Price::zero('EUR')), 'no taxes or discounts yet');
+    }
+
+    /** Lines in two currencies have no total, so the mix is refused when the line arrives. */
+    public function test_a_product_in_another_currency_is_refused(): void
+    {
+        $cart = self::cart();
+        $cart->addProduct(ItemId::fromString(Uuid::uuid4()->toString()), self::product('10.00', 'EUR'), new Quantity(1));
+
+        try {
+            $cart->addProduct(ItemId::fromString(Uuid::uuid4()->toString()), self::product('10.00', 'USD'), new Quantity(1));
+            self::fail('expected an exception');
+        } catch (PriceIsNotSameCurrencyException $e) {
+            self::assertStringContainsString('EUR', $e->getMessage());
+            self::assertStringContainsString('USD', $e->getMessage());
+        }
+
+        self::assertCount(1, $cart->items());
+
+        $this->expectException(PriceIsNotSameCurrencyException::class);
+
+        $cart->addItem(new CartItem(ItemId::fromString(Uuid::uuid4()->toString()), self::product('10.00', 'USD')));
+    }
+
+    public function test_the_first_line_sets_the_currency(): void
+    {
+        $cart = self::cart();
+
+        $cart->addProduct(ItemId::fromString(Uuid::uuid4()->toString()), self::product('10.00', 'USD'), new Quantity(1));
+        $cart->addProduct(ItemId::fromString(Uuid::uuid4()->toString()), self::product('5.00', 'USD'), new Quantity(1));
+
+        self::assertSame('USD', $cart->currency()?->getCurrencyCode());
+        self::assertSame('15.00', $cart->subtotal()?->amount());
+    }
+
     public function test_ensure_pending_names_the_conflict(): void
     {
         $cart = new Cart(CartId::fromString(Uuid::uuid4()->toString()), CartStatus::paid());
@@ -221,13 +276,13 @@ final class CartTest extends TestCase
         return new CartItem(ItemId::fromString(Uuid::uuid4()->toString()), self::product());
     }
 
-    private static function product(): Product
+    private static function product(string $amount = '10.00', string $currency = 'EUR'): Product
     {
         return new Product(
             ProductId::fromString(Uuid::uuid4()->toString()),
             ProductCode::fromString('SKU-' . random_int(1000, 9999)),
             Name::fromString('A product'),
-            Price::of(10, 'EUR'),
+            Price::of($amount, $currency),
             new Quantity(1),
         );
     }
