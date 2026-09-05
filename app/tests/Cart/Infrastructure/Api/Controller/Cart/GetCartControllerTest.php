@@ -57,6 +57,22 @@ final class GetCartControllerTest extends ApiTestCase
         self::assertSame(['amount' => '129.95', 'currency' => 'EUR'], array_column($body['items'], 'unitPrice', 'name')['Gafas']);
     }
 
+    public function test_the_cart_reports_when_it_was_opened_and_when_its_reservation_lapses(): void
+    {
+        $deadline = new \DateTimeImmutable('2030-01-01 12:00:00', new \DateTimeZone('UTC'));
+        $cart = $this->persistCartWithLines(CartStatus::PENDING, [[$this->persistProduct(), 1]], $deadline);
+
+        $this->request('GET', $this->url('api_get_cart_by_id', ['id' => $cart->id()->toString()]));
+
+        $body = $this->json();
+        self::assertSame('2030-01-01T12:00:00+00:00', $body['expiresAt']);
+        self::assertEqualsWithDelta(time(), (new \DateTimeImmutable($body['createdAt']))->getTimestamp(), 5);
+
+        $paid = $this->persistCart(CartStatus::PAID, $this->persistProduct());
+        $this->request('GET', $this->url('api_get_cart_by_id', ['id' => $paid->id()->toString()]));
+        self::assertNull($this->json()['expiresAt'], 'a paid cart reserves nothing');
+    }
+
     public function test_a_line_reports_how_many_units_it_holds(): void
     {
         $cart = $this->persistCartWithLines(CartStatus::PENDING, [[$this->persistProduct(), 3]]);

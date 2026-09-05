@@ -35,6 +35,10 @@ services:
         resource: '../../../src/Cart/Infrastructure/Api/Controller'
         tags: ['controller.service_arguments']
 
+    # Console entry points (cart:release-expired); tagged through #[AsCommand].
+    Siroko\Cart\Infrastructure\Console\:
+        resource: '../../../src/Cart/Infrastructure/Console'
+
     # Maps an exception onto the API's error response. Registered next to the
     # controllers that inject it; there is no broad App\ glob in this project,
     # so a class under src/ is not a service until it is named here.

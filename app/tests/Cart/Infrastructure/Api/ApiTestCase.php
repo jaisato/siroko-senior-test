@@ -187,12 +187,12 @@ abstract class ApiTestCase extends WebTestCase
      *
      * @param list<array{0: Product, 1: int}> $lines
      */
-    protected function persistCartWithLines(int $status, array $lines): Cart
+    protected function persistCartWithLines(int $status, array $lines, ?\DateTimeImmutable $expiresAt = null): Cart
     {
         if ([] === $lines && CartStatus::PENDING !== $status) {
             $cart = new Cart(CartId::fromString(Uuid::uuid4()->toString()), new CartStatus($status));
         } else {
-            $cart = new Cart(CartId::fromString(Uuid::uuid4()->toString()), CartStatus::pending());
+            $cart = new Cart(CartId::fromString(Uuid::uuid4()->toString()), CartStatus::pending(), null, $expiresAt);
 
             foreach ($lines as [$product, $units]) {
                 $cart->addItem(new CartItem(ItemId::fromString(Uuid::uuid4()->toString()), $product, new Quantity($units)));

@@ -344,6 +344,47 @@ final class CartTest extends TestCase
         self::assertSame('15.00', $cart->subtotal()?->amount());
     }
 
+    public function test_a_cart_opened_now_expires_after_the_reservation_ttl(): void
+    {
+        $now = new \DateTimeImmutable('2026-09-06 10:00:00', new \DateTimeZone('UTC'));
+
+        $cart = Cart::open(CartId::fromString(Uuid::uuid4()->toString()), $now, new \DateInterval('PT30M'));
+
+        self::assertTrue($cart->isPending());
+        self::assertSame($now, $cart->createdAt());
+        self::assertSame('2026-09-06 10:30:00', $cart->expiresAt()?->format('Y-m-d H:i:s'));
+        self::assertFalse($cart->isExpiredAt($now));
+        self::assertFalse($cart->isExpiredAt($now->modify('+29 minutes 59 seconds')));
+        self::assertTrue($cart->isExpiredAt($now->modify('+30 minutes')), 'the deadline itself counts as lapsed');
+        self::assertTrue($cart->isExpiredAt($now->modify('+1 day')));
+    }
+
+    /** Paid units are sold, not reserved: nothing is left to expire. */
+    public function test_paying_or_canceling_clears_the_deadline(): void
+    {
+        $now = new \DateTimeImmutable('2026-09-06 10:00:00', new \DateTimeZone('UTC'));
+        $paid = Cart::open(CartId::fromString(Uuid::uuid4()->toString()), $now, new \DateInterval('PT30M'));
+        $paid->addItem(self::item());
+        $canceled = Cart::open(CartId::fromString(Uuid::uuid4()->toString()), $now, new \DateInterval('PT30M'));
+
+        $paid->pay();
+        $canceled->cancel();
+
+        self::assertNull($paid->expiresAt());
+        self::assertNull($canceled->expiresAt());
+        self::assertFalse($paid->isExpiredAt($now->modify('+1 day')), 'a paid cart never expires');
+        self::assertFalse($canceled->isExpiredAt($now->modify('+1 day')));
+    }
+
+    public function test_a_cart_built_directly_is_dated_now_and_has_no_deadline(): void
+    {
+        $cart = self::cart();
+
+        self::assertEqualsWithDelta(time(), $cart->createdAt()->getTimestamp(), 5);
+        self::assertNull($cart->expiresAt());
+        self::assertFalse($cart->isExpiredAt(new \DateTimeImmutable('+1 year')), 'no deadline, no expiry');
+    }
+
     public function test_ensure_pending_names_the_conflict(): void
     {
         $cart = new Cart(CartId::fromString(Uuid::uuid4()->toString()), CartStatus::paid());

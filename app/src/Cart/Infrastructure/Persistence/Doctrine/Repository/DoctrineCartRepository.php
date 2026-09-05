@@ -5,14 +5,17 @@ declare(strict_types=1);
 namespace Siroko\Cart\Infrastructure\Persistence\Doctrine\Repository;
 
 use Doctrine\DBAL\LockMode;
+use Doctrine\DBAL\Types\Types;
 use Doctrine\ORM\EntityManagerInterface;
 use Ramsey\Uuid\Uuid;
 use Siroko\Cart\Domain\Entity\Cart;
 use Siroko\Cart\Domain\Entity\CartItem;
 use Siroko\Cart\Domain\Repository\CartRepository;
 use Siroko\Cart\Domain\ValueObject\CartId;
+use Siroko\Cart\Domain\ValueObject\CartStatus;
 use Siroko\Cart\Domain\ValueObject\ItemId;
 use Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\CartIdType;
+use Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\CartStatusType;
 use Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\ItemIdType;
 
 final class DoctrineCartRepository implements CartRepository
@@ -57,6 +60,26 @@ final class DoctrineCartRepository implements CartRepository
             ->getOneOrNullResult();
 
         return $cart instanceof Cart ? $cart : null;
+    }
+
+    public function expiredPendingIds(\DateTimeImmutable $now, int $limit): array
+    {
+        /** @var list<array{id: CartId}> $rows */
+        $rows = $this->em->createQueryBuilder()
+            ->select('c.id')
+            ->from(Cart::class, 'c')
+            ->where('c.status = :pending')
+            ->andWhere('c.expiresAt IS NOT NULL')
+            ->andWhere('c.expiresAt <= :now')
+            ->orderBy('c.expiresAt', 'ASC')
+            ->addOrderBy('c.id', 'ASC')
+            ->setParameter('pending', CartStatus::pending(), CartStatusType::NAME)
+            ->setParameter('now', $now, Types::DATETIME_IMMUTABLE)
+            ->setMaxResults($limit)
+            ->getQuery()
+            ->getArrayResult();
+
+        return array_map(static fn(array $row): CartId => $row['id'], $rows);
     }
 
     /**

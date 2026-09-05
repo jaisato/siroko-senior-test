@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Siroko\Cart\Application\Command\Cart;
 
+use Psr\Clock\ClockInterface;
 use Siroko\Cart\Application\Dto\Cart\CartRead;
 use Siroko\Cart\Domain\Entity\Cart;
 use Siroko\Cart\Domain\Exception\InvalidQuantityException;
@@ -13,18 +14,30 @@ use Siroko\Cart\Domain\Repository\CartItemRepository;
 use Siroko\Cart\Domain\Repository\CartRepository;
 use Siroko\Cart\Domain\Repository\ProductRepository;
 use Siroko\Cart\Domain\Transaction\TransactionalSession;
-use Siroko\Cart\Domain\ValueObject\CartStatus;
 use Siroko\Cart\Domain\ValueObject\ProductId;
 use Siroko\Cart\Domain\ValueObject\Quantity;
 
 final class CreateCartCommandHandler
 {
+    private readonly \DateInterval $reservationTtl;
+
+    /**
+     * @param int $reservationTtlSeconds how long a new cart holds its units before the sweep releases them
+     */
     public function __construct(
         private readonly CartRepository $cartRepository,
         private readonly CartItemRepository $cartItemRepository,
         private readonly ProductRepository $productRepository,
         private readonly TransactionalSession $session,
-    ) {}
+        private readonly ClockInterface $clock,
+        int $reservationTtlSeconds,
+    ) {
+        if ($reservationTtlSeconds < 1) {
+            throw new \InvalidArgumentException(\sprintf('The reservation TTL must be at least one second, got %d.', $reservationTtlSeconds));
+        }
+
+        $this->reservationTtl = new \DateInterval(\sprintf('PT%dS', $reservationTtlSeconds));
+    }
 
     /**
      * @throws ProductNotFoundException
@@ -33,10 +46,7 @@ final class CreateCartCommandHandler
      */
     public function __invoke(CreateCartCommand $command): CartRead
     {
-        $cart = new Cart(
-            $this->cartRepository->nextIdentity(),
-            CartStatus::pending(),
-        );
+        $cart = Cart::open($this->cartRepository->nextIdentity(), $this->clock->now(), $this->reservationTtl);
 
         // Igual que en AddCartProductCommandHandler: la reserva es un ajuste
         // relativo y condicional, no un `setQuantity()` con un valor absoluto

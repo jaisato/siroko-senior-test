@@ -36,4 +36,17 @@ interface CartRepository
      * Elimina un item del cart dado su itemId
      */
     public function removeItem(CartId $cartId, ItemId $itemId): void;
+
+    /**
+     * Identifiers of pending carts whose reservation lapsed at or before
+     * `$now`, oldest deadline first, at most `$limit` of them.
+     *
+     * Only the ids: the sweep loads each cart again with its row locked
+     * before deciding, so a checkout that wins the race is respected.
+     *
+     * @param positive-int $limit
+     *
+     * @return list<CartId>
+     */
+    public function expiredPendingIds(\DateTimeImmutable $now, int $limit): array;
 }

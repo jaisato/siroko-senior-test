@@ -16,6 +16,7 @@ services:
       XDEBUG_MODE: ${XDEBUG_MODE:-off}   # "debug" to attach an IDE
       DATABASE_URL: "mysql://${MYSQL_USER:-siroko}:${MYSQL_PASSWORD:-siroko_dev_password}@db:3306/${MYSQL_DATABASE:-siroko_cart}?serverVersion=8.0&charset=utf8mb4"
       MESSENGER_TRANSPORT_DSN: "doctrine://default"
+      CART_RESERVATION_TTL: ${CART_RESERVATION_TTL:-1800}
     volumes:
       - ./:/var/www:cached
     depends_on:
@@ -42,6 +43,31 @@ services:
       XDEBUG_MODE: "off"
       DATABASE_URL: "mysql://${MYSQL_USER:-siroko}:${MYSQL_PASSWORD:-siroko_dev_password}@db:3306/${MYSQL_DATABASE:-siroko_cart}?serverVersion=8.0&charset=utf8mb4"
       MESSENGER_TRANSPORT_DSN: "doctrine://default"
+    volumes:
+      - ./:/var/www:cached
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Releases the stock of pending carts whose reservation has lapsed, once a
+  # minute. In production the same command goes in cron (see the README).
+  scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: dev
+      args:
+        UID: ${UID:-1000}
+        GID: ${GID:-1000}
+    command: ["sh", "-c", "while true; do php app/bin/console cart:release-expired; sleep 60; done"]
+    environment:
+      APP_ENV: ${APP_ENV:-dev}
+      APP_SECRET: ${APP_SECRET:-dev_secret_not_for_production}
+      XDEBUG_MODE: "off"
+      DATABASE_URL: "mysql://${MYSQL_USER:-siroko}:${MYSQL_PASSWORD:-siroko_dev_password}@db:3306/${MYSQL_DATABASE:-siroko_cart}?serverVersion=8.0&charset=utf8mb4"
+      MESSENGER_TRANSPORT_DSN: "doctrine://default"
+      CART_RESERVATION_TTL: ${CART_RESERVATION_TTL:-1800}
     volumes:
       - ./:/var/www:cached
     depends_on:
