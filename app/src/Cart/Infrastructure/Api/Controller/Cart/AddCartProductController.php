@@ -8,10 +8,12 @@ use Siroko\Cart\Application\Command\Cart\AddCartProductCommand;
 use Siroko\Cart\Domain\CommandBus\CommandBusWrite;
 use Siroko\Cart\Domain\Entity\CartItem;
 use Siroko\Cart\Infrastructure\Api\ApiExceptionMapper;
+use Siroko\Cart\Infrastructure\Api\Idempotency\IdempotencyGuard;
 use Siroko\Cart\Infrastructure\Api\Security\CurrentCustomer;
 use Siroko\Cart\Infrastructure\Api\JsonRequest;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
+use Symfony\Component\HttpFoundation\Response;
 
 /**
  * PUT /v1/carts/{cartId}/products/{productId}/add - routed by CartResource.
@@ -19,6 +21,8 @@ use Symfony\Component\HttpFoundation\Request;
  * The body is optional. Without one, a single unit is added, as this endpoint
  * has always done; `{"quantity": n}` adds n units in one go. Either way the
  * units land on the line the cart already has for the product, if any.
+ *
+ * Honours `Idempotency-Key`: a retry with the same key adds the units once.
  */
 final class AddCartProductController
 {
@@ -26,9 +30,15 @@ final class AddCartProductController
         private readonly CommandBusWrite $commandBus,
         private readonly ApiExceptionMapper $errors,
         private readonly CurrentCustomer $customer,
+        private readonly IdempotencyGuard $idempotency,
     ) {}
 
-    public function __invoke(string $cartId, string $productId, Request $request): JsonResponse
+    public function __invoke(string $cartId, string $productId, Request $request): Response
+    {
+        return $this->idempotency->respond($request, fn(): Response => $this->add($cartId, $productId, $request));
+    }
+
+    private function add(string $cartId, string $productId, Request $request): Response
     {
         try {
             $cart = $this->commandBus->handle(

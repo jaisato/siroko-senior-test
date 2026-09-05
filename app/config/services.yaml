@@ -8,6 +8,8 @@ parameters:
     # How long a pending cart keeps its units reserved before cart:release-expired
     # gives them back (seconds).
     cart.reservation_ttl_seconds: '%env(int:CART_RESERVATION_TTL)%'
+    # How long a response stored for an Idempotency-Key can be replayed (seconds).
+    api.idempotency_ttl_seconds: '%env(int:IDEMPOTENCY_TTL)%'
 
 services:
     # default configuration for services in *this* file

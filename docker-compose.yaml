@@ -17,6 +17,7 @@ services:
       DATABASE_URL: "mysql://${MYSQL_USER:-siroko}:${MYSQL_PASSWORD:-siroko_dev_password}@db:3306/${MYSQL_DATABASE:-siroko_cart}?serverVersion=8.0&charset=utf8mb4"
       MESSENGER_TRANSPORT_DSN: "doctrine://default"
       CART_RESERVATION_TTL: ${CART_RESERVATION_TTL:-1800}
+      IDEMPOTENCY_TTL: ${IDEMPOTENCY_TTL:-86400}
       API_TOKENS: ${API_TOKENS:-}
     volumes:
       - ./:/var/www:cached
@@ -51,8 +52,9 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  # Releases the stock of pending carts whose reservation has lapsed, once a
-  # minute. In production the same command goes in cron (see the README).
+  # Housekeeping once a minute: releases the stock of pending carts whose
+  # reservation has lapsed and purges expired Idempotency-Key records. In
+  # production the same commands go in cron (see the README).
   scheduler:
     build:
       context: .
@@ -61,7 +63,7 @@ services:
       args:
         UID: ${UID:-1000}
         GID: ${GID:-1000}
-    command: ["sh", "-c", "while true; do php app/bin/console cart:release-expired; sleep 60; done"]
+    command: ["sh", "-c", "while true; do php app/bin/console cart:release-expired; php app/bin/console idempotency:purge-expired; sleep 60; done"]
     environment:
       APP_ENV: ${APP_ENV:-dev}
       APP_SECRET: ${APP_SECRET:-dev_secret_not_for_production}
@@ -69,6 +71,7 @@ services:
       DATABASE_URL: "mysql://${MYSQL_USER:-siroko}:${MYSQL_PASSWORD:-siroko_dev_password}@db:3306/${MYSQL_DATABASE:-siroko_cart}?serverVersion=8.0&charset=utf8mb4"
       MESSENGER_TRANSPORT_DSN: "doctrine://default"
       CART_RESERVATION_TTL: ${CART_RESERVATION_TTL:-1800}
+      IDEMPOTENCY_TTL: ${IDEMPOTENCY_TTL:-86400}
     volumes:
       - ./:/var/www:cached
     depends_on:
