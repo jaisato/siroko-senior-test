@@ -1,8 +1,16 @@
 .git
 .gitignore
+.github
 node_modules
+**/node_modules
 vendor
+app/vendor
 var
+app/var
+app/.phpunit.cache
+app/.env.local
+app/.env.*.local
+.env
 .idea
 .vscode
 .DS_Store
