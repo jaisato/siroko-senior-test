@@ -36,9 +36,9 @@ Reglas de negocio que la API protege:
 - Docker / Docker Compose
 - PHP 8.4 (8.3 soportado), Symfony 7.4, API Platform 4, Doctrine ORM 3 / DBAL 3
 - MySQL 8 (persistencia). La suite de tests corre también sobre SQLite.
-- Nginx (servidor web), RabbitMQ (eventos de dominio asíncronos; la infraestructura está
-  cableada -transporte, reintentos, cola de fallidos, *worker*- pero la prueba no define
-  todavía ningún evento de negocio).
+- Nginx (servidor web). Los eventos de dominio viajan por Symfony Messenger con el
+  transporte Doctrine (tabla `messenger_messages` de la propia base de datos, creada por las
+  migraciones) y los consume el servicio `worker`; hay reintentos y cola de fallidos.
 
 ## Puesta en marcha
 
@@ -94,11 +94,11 @@ sin base de datos) e `infrastructure` (tests funcionales HTTP, repositorios, tip
 fixtures). Cada test corre dentro de una transacción que se deshace al terminar
 (`dama/doctrine-test-bundle`).
 
-**En local, sin Docker** (sólo PHP 8.3+ y Composer; `ext-amqp` no es necesaria para los tests):
+**En local, sin Docker** (sólo PHP 8.3+ y Composer):
 
 ```bash
 cd app
-composer install --ignore-platform-req=ext-amqp
+composer install
 composer test            # toda la suite sobre SQLite (app/var/test.db, esquema creado por tests/bootstrap.php)
 composer test:unit       # sólo dominio y aplicación
 composer test:infra      # sólo infraestructura
@@ -150,9 +150,8 @@ Los mismos targets existen en el `Makefile` (`make cs`, `make stan`, `make lint`
 |----------|-------|-----|
 | `APP_ENV`, `APP_SECRET` | `.env` raíz / compose | entorno Symfony; el secreto de producción viene siempre del entorno |
 | `MYSQL_DATABASE`, `MYSQL_USER`, `MYSQL_PASSWORD`, `MYSQL_ROOT_PASSWORD` | `.env` raíz / compose | base de datos; compose compone `DATABASE_URL` con ellas |
-| `RABBITMQ_USER`, `RABBITMQ_PASSWORD` | `.env` raíz / compose | broker; compose compone `MESSENGER_TRANSPORT_DSN` |
 | `DATABASE_URL` | `app/.env*` | DSN Doctrine (`app/.env.test` usa SQLite) |
-| `MESSENGER_TRANSPORT_DSN` | `app/.env` | transporte Messenger de los eventos de dominio |
+| `MESSENGER_TRANSPORT_DSN` | `app/.env` / compose | transporte Messenger de los eventos de dominio (`doctrine://default`: la cola vive en la base de datos de la aplicación) |
 | `API_ROUTE_PREFIX` | `app/.env` | prefijo de las rutas de la API (`/api`) |
 | `CORS_ALLOW_ORIGIN` | `app/.env` | orígenes permitidos por nelmio/cors |
 

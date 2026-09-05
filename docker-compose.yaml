@@ -15,7 +15,7 @@ services:
       APP_SECRET: ${APP_SECRET:-dev_secret_not_for_production}
       XDEBUG_MODE: ${XDEBUG_MODE:-off}   # "debug" to attach an IDE
       DATABASE_URL: "mysql://${MYSQL_USER:-siroko}:${MYSQL_PASSWORD:-siroko_dev_password}@db:3306/${MYSQL_DATABASE:-siroko_cart}?serverVersion=8.0&charset=utf8mb4"
-      MESSENGER_TRANSPORT_DSN: "amqp://${RABBITMQ_USER:-siroko}:${RABBITMQ_PASSWORD:-siroko_dev_password}@rabbitmq:5672/%2f/messages?auto_setup=1"
+      MESSENGER_TRANSPORT_DSN: "doctrine://default"
     volumes:
       - ./:/var/www:cached
     depends_on:
@@ -23,9 +23,10 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  # Consumes the domain events routed to the `async` transport. Bounded
-  # lifetime + restart is the supervision strategy: the process exits cleanly
-  # every hour or at 256M and compose starts a fresh one.
+  # Consumes the domain events routed to the `async` transport, which lives in
+  # the MySQL database (table messenger_messages). Bounded lifetime + restart is
+  # the supervision strategy: the process exits cleanly every hour or at 256M
+  # and compose starts a fresh one.
   worker:
     build:
       context: .
@@ -40,13 +41,11 @@ services:
       APP_SECRET: ${APP_SECRET:-dev_secret_not_for_production}
       XDEBUG_MODE: "off"
       DATABASE_URL: "mysql://${MYSQL_USER:-siroko}:${MYSQL_PASSWORD:-siroko_dev_password}@db:3306/${MYSQL_DATABASE:-siroko_cart}?serverVersion=8.0&charset=utf8mb4"
-      MESSENGER_TRANSPORT_DSN: "amqp://${RABBITMQ_USER:-siroko}:${RABBITMQ_PASSWORD:-siroko_dev_password}@rabbitmq:5672/%2f/messages?auto_setup=1"
+      MESSENGER_TRANSPORT_DSN: "doctrine://default"
     volumes:
       - ./:/var/www:cached
     depends_on:
       db:
-        condition: service_healthy
-      rabbitmq:
         condition: service_healthy
     restart: unless-stopped
 
@@ -81,23 +80,5 @@ services:
       start_period: 20s
     restart: unless-stopped
 
-  rabbitmq:
-    image: rabbitmq:3.13-management
-    environment:
-      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-siroko}
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-siroko_dev_password}
-      RABBITMQ_DEFAULT_VHOST: /
-    ports:
-      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"  # management UI only; AMQP stays internal
-    volumes:
-      - rabbitmq_data:/var/lib/rabbitmq
-    healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
-
 volumes:
   db_data:
-  rabbitmq_data:
