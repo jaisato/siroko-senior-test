@@ -62,16 +62,73 @@ datos de la aplicación y de la de tests (`<MYSQL_DATABASE>_test`, creada por
 
 Prefijo `/api` (variable `API_ROUTE_PREFIX`). Documentación interactiva en `/api/docs`.
 
+**Productos**
+
 | Método | Ruta | Respuesta |
 |--------|------|-----------|
 | `POST` | `/v1/products` | `201` producto creado |
-| `GET` | `/v1/products?pageNumber=&pageSize=` | `200` página (`products`, `page`, `pageSize`, `total`, `pages`) |
+| `GET` | `/v1/products` | `200` página (`products`, `page`, `pageSize`, `total`, `pages`) |
 | `GET` | `/v1/products/{id}` | `200` producto |
+| `GET` | `/v1/products/by-code/{code}` | `200` producto por su código |
+| `PATCH` | `/v1/products/{id}` | `200` nombre, código y/o precio actualizados |
+| `PATCH` | `/v1/products/{id}/stock` | `200` stock fijado (`quantity`) o ajustado (`delta`) |
+| `DELETE` | `/v1/products/{id}` | `204` retirada lógica: desaparece del catálogo y no admite nuevas líneas |
+
+El listado acepta `pageNumber`, `pageSize`, `q` (nombre o código), `minPrice`, `maxPrice`,
+`inStock` y `sort` (`name`, `price` o `code`, con `-` delante para orden descendente).
+
+**Carritos y pedidos**
+
+| Método | Ruta | Respuesta |
+|--------|------|-----------|
 | `POST` | `/v1/carts` | `201` carrito creado con sus líneas |
-| `GET` | `/v1/carts/{id}` | `200` carrito |
-| `PUT` | `/v1/carts/{cartId}/products/{productId}/add` | `200` carrito con la nueva línea |
-| `DELETE` | `/v1/carts/{cartId}/items/{itemId}` | `204` |
-| `PUT` | `/v1/carts/{id}/checkout` | `200` carrito pagado |
+| `GET` | `/v1/carts` | `200` carritos del llamante |
+| `GET` | `/v1/carts/{id}` | `200` carrito con sus líneas y totales |
+| `PUT` | `/v1/carts/{cartId}/products/{productId}/add` | `200` carrito con la línea añadida |
+| `PATCH` | `/v1/carts/{cartId}/items/{itemId}` | `200` cantidad de la línea (`quantity`; `0` la elimina) |
+| `DELETE` | `/v1/carts/{cartId}/items/{itemId}` | `204` línea eliminada, stock devuelto |
+| `PUT` | `/v1/carts/{id}/checkout` | `200` carrito pagado; crea el pedido |
+| `PUT` | `/v1/carts/{id}/deliver` | `200` carrito entregado |
+| `DELETE` | `/v1/carts/{id}` | `204` carrito cancelado, stock devuelto |
+| `GET` | `/v1/orders/{id}` | `200` pedido con sus líneas y su total |
+
+El carrito responde con `subtotal`, `total`, `itemCount` y `currency`; sus líneas llevan
+cantidad. Un carrito mantiene una sola moneda: mezclarlas es un `409`.
+
+Estados: `pending → paid → delivered`, y `pending` o `paid → canceled`. Sólo un carrito
+pendiente admite cambios de líneas y *checkout*; cancelar devuelve el stock reservado.
+Fuera de esas transiciones la respuesta es `409`.
+
+**Operación**
+
+| Método | Ruta | Respuesta |
+|--------|------|-----------|
+| `GET` | `/health` | `200` cuando la base de datos y la cola responden, `503` si no |
+
+`/health` y `/api/docs` son públicos aunque la autenticación esté activada.
+
+### Reintentos seguros: `Idempotency-Key`
+
+`POST /v1/carts`, `PUT .../add` y `PUT .../checkout` aceptan la cabecera `Idempotency-Key`.
+La primera petición guarda su respuesta junto a una huella del cuerpo; repetirla con la
+misma clave y el mismo cuerpo devuelve la respuesta guardada con `Idempotent-Replayed: true`
+sin volver a ejecutar nada, y con un cuerpo distinto responde `422`. Las claves caducan a
+las `IDEMPOTENCY_TTL` (24 h) y `bin/console idempotency:purge-expired` limpia las vencidas.
+
+### Autenticación (desactivada por defecto)
+
+Con `API_TOKENS` vacía la API es abierta, que es como está pensada la prueba. Al definirla
+(`API_TOKENS="cliente:secreto,otro:secreto2"`) cada petición necesita
+`Authorization: Bearer <secreto>` o `X-API-Key: <secreto>`, y responde `401` sin ella. El
+carrito pasa entonces a tener dueño: `GET /v1/carts` sólo lista los del llamante y operar
+sobre el carrito de otro es un `404`.
+
+### Reservas caducadas
+
+El stock se reserva al añadir la línea, así que un carrito abandonado lo retendría para
+siempre. `bin/console cart:release-expired` cancela los carritos pendientes que llevan más
+de `CART_RESERVATION_TTL` (30 min) parados y devuelve sus unidades; conviene ejecutarlo
+periódicamente (cron o un `worker` con `--time-limit`).
 
 Todos los errores usan el mismo contrato, [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807)
 (`Content-Type: application/problem+json`):
@@ -154,6 +211,9 @@ Los mismos targets existen en el `Makefile` (`make cs`, `make stan`, `make lint`
 | `MESSENGER_TRANSPORT_DSN` | `app/.env` / compose | transporte Messenger de los eventos de dominio (`doctrine://default`: la cola vive en la base de datos de la aplicación) |
 | `API_ROUTE_PREFIX` | `app/.env` | prefijo de las rutas de la API (`/api`) |
 | `CORS_ALLOW_ORIGIN` | `app/.env` | orígenes permitidos por nelmio/cors |
+| `API_TOKENS` | `app/.env` / compose | `cliente:secreto` separados por comas; vacía deja la API abierta |
+| `CART_RESERVATION_TTL` | `app/.env` | segundos que un carrito pendiente retiene su stock (1800) |
+| `IDEMPOTENCY_TTL` | `app/.env` | segundos que se recuerda una `Idempotency-Key` (86400) |
 
 Los ficheros versionados sólo contienen valores de desarrollo evidentes; nada real se
 escribe en el repositorio (`.env` raíz está en `.gitignore`).
