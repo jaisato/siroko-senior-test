@@ -9,6 +9,7 @@ use Siroko\Cart\Domain\ValueObject\CartId;
 use Siroko\Cart\Domain\ValueObject\CartStatus;
 use Siroko\Cart\Domain\ValueObject\CustomerId;
 use Siroko\Cart\Domain\ValueObject\ItemId;
+use Siroko\Cart\Domain\ValueObject\ProductId;
 
 interface CartRepository
 {
@@ -67,4 +68,18 @@ interface CartRepository
      * @return list<CartId>
      */
     public function expiredPendingIds(\DateTimeImmutable $now, int $limit): array;
+
+    /**
+     * Whether any pending cart holds a line for this product.
+     *
+     * Asked before a product's currency is allowed to change. A cart line
+     * dereferences the product rather than carrying a copy of its price, so a
+     * product repriced into another currency while it sits in a cart breaks
+     * that cart's "one currency" invariant after the fact: `Cart::subtotal()`
+     * throws from then on, reading the cart answers 409 and checkout rolls
+     * back every time. The customer cannot fix it - the cart is unusable until
+     * it is cancelled or expires - so the change has to be refused while the
+     * cart is still pending.
+     */
+    public function anyPendingHolds(ProductId $productId): bool;
 }

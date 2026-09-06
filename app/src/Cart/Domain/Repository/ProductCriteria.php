@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Siroko\Cart\Domain\Repository;
 
+use Brick\Math\BigDecimal;
 use Siroko\Cart\Domain\Exception\InvalidProductCriteriaException;
 
 /**
@@ -67,7 +68,13 @@ final class ProductCriteria
         $minPrice = self::amount($minPrice, 'minPrice');
         $maxPrice = self::amount($maxPrice, 'maxPrice');
 
-        if (null !== $minPrice && null !== $maxPrice && (float) $minPrice > (float) $maxPrice) {
+        // Compared as decimals, not as floats. The pattern above admits fifteen
+        // integral digits and four decimal ones, which is more precision than
+        // a double carries: cast, 999999999999999.9999 and .9998 come out
+        // equal, the inverted range goes unreported, and the repository then
+        // applies two contradictory predicates and answers an empty page as
+        // though that were the truth about the catalogue.
+        if (null !== $minPrice && null !== $maxPrice && BigDecimal::of($minPrice)->isGreaterThan(BigDecimal::of($maxPrice))) {
             throw InvalidProductCriteriaException::invertedPriceRange();
         }
 

@@ -12,6 +12,23 @@ final class ProductCode implements StringValueObject
 
     public const MAX_LENGTH = 50;
 
+    /**
+     * Anything but a slash and the control characters.
+     *
+     * Length was the only rule, so `ABC/123` was a code the API happily
+     * created and then could never return: `GET /v1/products/by-code/{code}`
+     * matches one path segment, and a slash - percent-encoded or not, since
+     * the router decodes before it routes - reads as the start of another. The
+     * lookup 404s on a code the catalogue really holds, which is worse than
+     * refusing the code in the first place.
+     *
+     * Everything else stays: spaces and accents are reachable percent-encoded
+     * and real catalogues use them. Control characters are not a restriction
+     * anybody feels and have no business in an identifier that ends up in URLs
+     * and log lines.
+     */
+    private const PATTERN = '/^[^\/\x00-\x1F\x7F]{1,50}\z/u';
+
     private function __construct(private readonly string $value) {}
 
     /**
@@ -27,6 +44,10 @@ final class ProductCode implements StringValueObject
 
         if ($length < self::MIN_LENGTH || $length > self::MAX_LENGTH) {
             throw new InvalidProductCodeException(\sprintf('The product code must be between %d and %d characters long.', self::MIN_LENGTH, self::MAX_LENGTH));
+        }
+
+        if (1 !== preg_match(self::PATTERN, $code)) {
+            throw new InvalidProductCodeException('The product code cannot contain a slash or a control character.');
         }
 
         return new self($code);

@@ -14,7 +14,9 @@ use Siroko\Cart\Domain\Exception\InvalidIdentifierException;
 use Siroko\Cart\Domain\Exception\InvalidPriceException;
 use Siroko\Cart\Domain\Exception\InvalidProductUpdateException;
 use Siroko\Cart\Domain\Exception\NameInvalidLengthException;
+use Siroko\Cart\Domain\Exception\ProductIsInAPendingCartException;
 use Siroko\Cart\Domain\Exception\ProductNotFoundException;
+use Siroko\Cart\Domain\Repository\CartRepository;
 use Siroko\Cart\Domain\Repository\ProductRepository;
 use Siroko\Cart\Domain\ValueObject\Name;
 use Siroko\Cart\Domain\ValueObject\Price;
@@ -28,12 +30,56 @@ final class UpdateProductCommandHandlerTest extends TestCase
     /** @var list<string> codes the catalogue already holds */
     private array $takenCodes = [];
 
+    /** Whether a pending cart holds the product being updated. */
+    private bool $heldByAPendingCart = false;
+
     private RecordingSession $session;
 
     protected function setUp(): void
     {
         $this->takenCodes = [];
+        $this->heldByAPendingCart = false;
         $this->session = new RecordingSession();
+    }
+
+    /**
+     * A cart line points at the product rather than holding a copy of its
+     * price, so a currency change under a pending cart breaks that cart's
+     * "one currency" rule after the fact: subtotal() throws from then on,
+     * reading the cart answers 409 and checkout rolls back until it is
+     * cancelled or expires. The customer cannot repair it; the change is
+     * refused instead.
+     */
+    public function test_the_currency_cannot_change_under_a_pending_cart(): void
+    {
+        $this->heldByAPendingCart = true;
+        $product = $this->product();
+
+        $this->expectException(ProductIsInAPendingCartException::class);
+        $this->expectExceptionMessage('cannot change from EUR to USD');
+
+        ($this->handler($product))(new UpdateProductCommand($product->id()->toString(), priceAmount: '19.99', priceCurrency: 'USD'));
+    }
+
+    /** The amount may move all it likes; it is the currency the cart counts on. */
+    public function test_the_amount_may_change_under_a_pending_cart(): void
+    {
+        $this->heldByAPendingCart = true;
+        $product = $this->product();
+
+        ($this->handler($product))(new UpdateProductCommand($product->id()->toString(), priceAmount: '29.99', priceCurrency: 'EUR'));
+
+        self::assertSame('29.99', $product->price()->amount());
+    }
+
+    /** With no cart counting on it, a product may be repriced in any currency. */
+    public function test_the_currency_changes_freely_when_no_cart_holds_the_product(): void
+    {
+        $product = $this->product();
+
+        ($this->handler($product))(new UpdateProductCommand($product->id()->toString(), priceAmount: '19.99', priceCurrency: 'USD'));
+
+        self::assertSame('USD', $product->price()->currency()->getCurrencyCode());
     }
 
     public function test_it_changes_only_the_fields_that_were_sent(): void
@@ -159,6 +205,9 @@ final class UpdateProductCommandHandlerTest extends TestCase
             $this->session->log[] = 'save';
         });
 
-        return new UpdateProductCommandHandler($products, $this->session);
+        $carts = $this->createStub(CartRepository::class);
+        $carts->method('anyPendingHolds')->willReturnCallback(fn(): bool => $this->heldByAPendingCart);
+
+        return new UpdateProductCommandHandler($products, $carts, $this->session);
     }
 }
