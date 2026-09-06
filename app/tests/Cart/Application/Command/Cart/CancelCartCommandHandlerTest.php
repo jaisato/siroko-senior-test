@@ -91,7 +91,9 @@ final class CancelCartCommandHandlerTest extends TestCase
         self::assertTrue($order->isCanceled());
         self::assertSame('2026-09-06 10:05:00', $order->canceledAt()?->format('Y-m-d H:i:s'));
         self::assertFalse($order->confirm(new \DateTimeImmutable('2026-09-06 11:00:00', new \DateTimeZone('UTC'))), 'the queued confirmation finds nothing to do');
-        self::assertContains('saveOrder', $this->session->log);
+        // Under the order's row lock, and inside the cart's transaction: the
+        // worker's confirmation is the other writer to that row.
+        self::assertSame(['begin', 'lockCart', 'returnStock', 'saveCart', 'lockOrder', 'saveOrder', 'commit'], $this->session->log);
     }
 
     /** A pending cart has no order behind it, and none is looked for. */
@@ -101,6 +103,7 @@ final class CancelCartCommandHandlerTest extends TestCase
 
         $this->handler($cart)(new CancelCartCommand($cart->id()->toString()));
 
+        self::assertNotContains('lockOrder', $this->session->log);
         self::assertNotContains('saveOrder', $this->session->log);
     }
 
@@ -214,7 +217,12 @@ final class CancelCartCommandHandlerTest extends TestCase
         });
 
         $orders = $this->createStub(OrderRepository::class);
-        $orders->method('ofCart')->willReturn($order);
+        $orders->method('ofCartForUpdate')->willReturnCallback(function () use ($order): ?Order {
+            $this->session->log[] = 'lockOrder';
+
+            return $order;
+        });
+        $orders->method('ofCart')->willReturnCallback(static fn() => self::fail('the order must be loaded with its row locked'));
         $orders->method('save')->willReturnCallback(function (): void {
             $this->session->log[] = 'saveOrder';
         });

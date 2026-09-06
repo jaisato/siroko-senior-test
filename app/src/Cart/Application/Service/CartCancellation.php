@@ -63,7 +63,12 @@ final class CartCancellation
      */
     private function cancelOrderOf(Cart $cart): void
     {
-        $order = $this->orderRepository->ofCart($cart->id());
+        // Under the order's row lock, not just the cart's: the confirmation
+        // runs on the worker, off the CartCheckedOut queue, and takes no cart
+        // lock at all. Reading the order unlocked let both sides decide on the
+        // state they had each read, and the customer was sent the confirmation
+        // of a purchase they had called off.
+        $order = $this->orderRepository->ofCartForUpdate($cart->id());
 
         if (null === $order || !$order->cancel($this->clock->now())) {
             return;

@@ -24,6 +24,7 @@ use Siroko\Cart\Domain\ValueObject\Price;
 use Siroko\Cart\Domain\ValueObject\ProductCode;
 use Siroko\Cart\Domain\ValueObject\ProductId;
 use Siroko\Cart\Domain\ValueObject\Quantity;
+use Siroko\Tests\Cart\Application\Command\Cart\RecordingSession;
 use Symfony\Component\Clock\MockClock;
 
 /**
@@ -34,11 +35,14 @@ final class SendOrderConfirmationCommandHandlerTest extends TestCase
 {
     private RecordingLogger $logger;
 
+    private RecordingSession $session;
+
     private int $saves = 0;
 
     protected function setUp(): void
     {
         $this->logger = new RecordingLogger();
+        $this->session = new RecordingSession();
         $this->saves = 0;
     }
 
@@ -57,6 +61,7 @@ final class SendOrderConfirmationCommandHandlerTest extends TestCase
         self::assertStringContainsString('sent', $this->logger->records[0]['message']);
         self::assertSame($order->id()->toString(), $this->logger->records[0]['context']['orderId']);
         self::assertSame('20.00 EUR', $this->logger->records[0]['context']['total']);
+        self::assertSame(['begin', 'lockOrder', 'saveOrder', 'commit'], $this->session->log);
     }
 
     /** Redelivery: the first timestamp stands and nothing is written again. */
@@ -72,7 +77,30 @@ final class SendOrderConfirmationCommandHandlerTest extends TestCase
         self::assertSame('2026-09-06T10:05:00+00:00', $order->confirmedAt()?->format(\DateTimeInterface::RFC3339));
         self::assertSame(1, $this->saves, 'the second run did not write');
         self::assertCount(2, $this->logger->records);
-        self::assertStringContainsString('already sent', $this->logger->records[1]['message']);
+        self::assertStringContainsString('nothing to do', $this->logger->records[1]['message']);
+        self::assertTrue($this->logger->records[1]['context']['confirmed']);
+        self::assertFalse($this->logger->records[1]['context']['canceled']);
+    }
+
+    /**
+     * The cancellation and this handler are two writers to one order row.
+     * Read unlocked, each decided on the state it had read: the cancellation
+     * set `canceled_at` while this handler, holding an order it had loaded as
+     * neither confirmed nor cancelled, set `confirmed_at` on top, and the
+     * customer was told a purchase they had called off was on its way. Under
+     * the lock the queued run reads the cancellation and stands down.
+     */
+    public function test_an_order_cancelled_before_the_worker_ran_is_not_confirmed(): void
+    {
+        $order = $this->order();
+        $order->cancel(new \DateTimeImmutable('2026-09-06 10:02:00', new \DateTimeZone('UTC')));
+
+        $this->handler($order, new MockClock('2026-09-06 10:05:00', 'UTC'))(new SendOrderConfirmationCommand($order->id()->toString()));
+
+        self::assertFalse($order->isConfirmed());
+        self::assertSame(0, $this->saves);
+        self::assertStringContainsString('nothing to do', $this->logger->records[0]['message']);
+        self::assertTrue($this->logger->records[0]['context']['canceled']);
     }
 
     /** An unknown order is an error the queue should see (retry, then park), not a silent drop. */
@@ -109,11 +137,17 @@ final class SendOrderConfirmationCommandHandlerTest extends TestCase
     private function handler(?Order $order, MockClock $clock): SendOrderConfirmationCommandHandler
     {
         $orders = $this->createStub(OrderRepository::class);
-        $orders->method('ofId')->willReturn($order);
+        $orders->method('ofIdForUpdate')->willReturnCallback(function () use ($order): ?Order {
+            $this->session->log[] = 'lockOrder';
+
+            return $order;
+        });
+        $orders->method('ofId')->willReturnCallback(static fn() => self::fail('the order must be loaded with its row locked'));
         $orders->method('save')->willReturnCallback(function (): void {
             ++$this->saves;
+            $this->session->log[] = 'saveOrder';
         });
 
-        return new SendOrderConfirmationCommandHandler($orders, $clock, $this->logger);
+        return new SendOrderConfirmationCommandHandler($orders, $clock, $this->logger, $this->session);
     }
 }

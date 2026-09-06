@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace Siroko\Cart\Infrastructure\Persistence\Doctrine\Repository;
 
+use Doctrine\DBAL\LockMode;
 use Doctrine\ORM\EntityManagerInterface;
+use Doctrine\ORM\Query;
 use Ramsey\Uuid\Uuid;
 use Siroko\Cart\Domain\Entity\Order;
 use Siroko\Cart\Domain\Repository\OrderRepository;
@@ -32,27 +34,70 @@ final class DoctrineOrderRepository implements OrderRepository
 
     public function ofId(OrderId $id): ?Order
     {
-        $order = $this->em->createQueryBuilder()
-            ->select('o')
-            ->from(Order::class, 'o')
-            ->where('o.id = :id')
-            ->setParameter('id', $id, OrderIdType::NAME)
-            ->getQuery()
-            ->getOneOrNullResult();
+        return $this->byId($id, null);
+    }
 
-        return $order instanceof Order ? $order : null;
+    public function ofIdForUpdate(OrderId $id): ?Order
+    {
+        return $this->byId($id, LockMode::PESSIMISTIC_WRITE);
     }
 
     public function ofCart(CartId $cartId): ?Order
     {
-        $order = $this->em->createQueryBuilder()
+        return $this->byCart($cartId, null);
+    }
+
+    public function ofCartForUpdate(CartId $cartId): ?Order
+    {
+        return $this->byCart($cartId, LockMode::PESSIMISTIC_WRITE);
+    }
+
+    /** @param LockMode::*|null $lock */
+    private function byId(OrderId $id, ?int $lock): ?Order
+    {
+        $query = $this->em->createQueryBuilder()
+            ->select('o')
+            ->from(Order::class, 'o')
+            ->where('o.id = :id')
+            ->setParameter('id', $id, OrderIdType::NAME)
+            ->getQuery();
+
+        $order = $this->locking($query, $lock)->getOneOrNullResult();
+
+        return $order instanceof Order ? $order : null;
+    }
+
+    /** @param LockMode::*|null $lock */
+    private function byCart(CartId $cartId, ?int $lock): ?Order
+    {
+        $query = $this->em->createQueryBuilder()
             ->select('o')
             ->from(Order::class, 'o')
             ->where('o.cartId = :cartId')
             ->setParameter('cartId', $cartId, CartIdType::NAME)
-            ->getQuery()
-            ->getOneOrNullResult();
+            ->getQuery();
+
+        $order = $this->locking($query, $lock)->getOneOrNullResult();
 
         return $order instanceof Order ? $order : null;
+    }
+
+    /**
+     * A locked read has to hit the database: without HINT_REFRESH the query
+     * takes the row lock and then hands back whatever copy the identity map
+     * already holds, which is the stale state the lock exists to rule out.
+     *
+     * @param Query<null, mixed> $query
+     * @param LockMode::*|null   $lock
+     *
+     * @return Query<null, mixed>
+     */
+    private function locking(Query $query, ?int $lock): Query
+    {
+        if (null === $lock) {
+            return $query;
+        }
+
+        return $query->setLockMode($lock)->setHint(Query::HINT_REFRESH, true);
     }
 }

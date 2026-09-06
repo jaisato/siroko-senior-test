@@ -9,16 +9,7 @@ use Doctrine\Migrations\AbstractMigration;
 use Siroko\Cart\Domain\ValueObject\Price;
 
 /**
- * Two places where the database disagreed with the domain about equality and
- * about bounds, and one it had nowhere to record.
- *
- * `product.code` inherited the table's utf8mb4_unicode_ci, which compares
- * case-insensitively, while ProductCode::equals() compares byte for byte. So
- * `uniq_product_code` refused `abc` next to `ABC` - a valid create answering
- * 409 - and the by-code lookup could hand back `ABC` for a request for `abc`.
- * SQLite compares TEXT byte for byte, so the local suite and MySQL disagreed
- * about the same data. utf8mb4_bin makes the column compare the way the value
- * object does; SqliteBinaryCollationMiddleware teaches SQLite the name.
+ * A bound the database never enforced, and a fact it had nowhere to record.
  *
  * `Price::MAX_AMOUNT` bounds a unit price so that a full cart of it still fits
  * the money columns. Nothing enforced it on rows written before that bound
@@ -34,7 +25,7 @@ final class Version20260906190000 extends AbstractMigration
 {
     public function getDescription(): string
     {
-        return 'product.code compares case-sensitively, orders can be cancelled, and legacy prices above the domain maximum stop the upgrade';
+        return 'orders can be cancelled, and legacy prices above the domain maximum stop the upgrade';
     }
 
     /**
@@ -43,8 +34,12 @@ final class Version20260906190000 extends AbstractMigration
      */
     public function preUp(Schema $schema): void
     {
+        // Only what is still on sale. A withdrawn product cannot be added to a
+        // cart, so its price can no longer overflow anything, and stopping the
+        // deploy over one would be asking for a fix (withdraw it) that has
+        // already been applied.
         $overpriced = $this->connection->fetchFirstColumn(
-            'SELECT code FROM product WHERE price_amount > :maximum ORDER BY code LIMIT 10',
+            'SELECT code FROM product WHERE price_amount > :maximum AND deleted_at IS NULL ORDER BY code LIMIT 10',
             ['maximum' => Price::MAX_AMOUNT],
         );
 
@@ -61,8 +56,6 @@ final class Version20260906190000 extends AbstractMigration
 
     public function up(Schema $schema): void
     {
-        $this->addSql('ALTER TABLE product MODIFY code VARCHAR(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL COMMENT \'(DC2Type:product_code)\'');
-
         // A paid cart can be cancelled, and the order is the record of what was
         // bought. Left untouched it was still confirmed by the queued
         // CartCheckedOut consumer, which only asked whether the confirmation
@@ -74,9 +67,5 @@ final class Version20260906190000 extends AbstractMigration
     public function down(Schema $schema): void
     {
         $this->addSql('ALTER TABLE orders DROP canceled_at');
-
-        // Back to the table's default collation, which is where the column came
-        // from and what every other VARCHAR here still uses.
-        $this->addSql('ALTER TABLE product MODIFY code VARCHAR(50) NOT NULL COMMENT \'(DC2Type:product_code)\'');
     }
 }

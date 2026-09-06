@@ -18,6 +18,7 @@ final class OrderRead
      * @param array{amount: string, currency: string} $total
      * @param string                                  $createdAt   RFC 3339, UTC
      * @param string|null                             $confirmedAt RFC 3339, UTC; null until the confirmation went out
+     * @param string|null                             $canceledAt  RFC 3339, UTC; null unless the purchase was called off
      */
     public function __construct(
         public readonly string $id,
@@ -28,6 +29,7 @@ final class OrderRead
         public readonly array $lines,
         public readonly string $createdAt,
         public readonly ?string $confirmedAt,
+        public readonly ?string $canceledAt,
     ) {}
 
     public static function fromModel(Order $order): self
@@ -47,6 +49,10 @@ final class OrderRead
             lines: $lines,
             createdAt: self::utc($order->createdAt()),
             confirmedAt: null === $order->confirmedAt() ? null : self::utc($order->confirmedAt()),
+            // Without it a cancelled order reads exactly like one still
+            // waiting for its worker: `confirmedAt: null` and nothing else to
+            // tell the two apart.
+            canceledAt: null === $order->canceledAt() ? null : self::utc($order->canceledAt()),
         );
     }
 
