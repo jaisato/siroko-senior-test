@@ -58,6 +58,26 @@ final class GetOrderByIdQueryHandlerTest extends TestCase
         $read = (new GetOrderByIdQueryHandler($orders))(new GetOrderByIdQuery(Uuid::uuid4()->toString()));
 
         self::assertNull($read->confirmedAt);
+        self::assertNull($read->canceledAt);
+    }
+
+    /**
+     * A cancelled order is never confirmed, so without `canceledAt` it reads
+     * exactly like one still waiting for its worker: `confirmedAt: null` and
+     * nothing else to tell a called-off purchase from a pending confirmation.
+     */
+    public function test_a_cancelled_order_says_when_it_was_called_off(): void
+    {
+        $order = $this->order();
+        $order->cancel(new \DateTimeImmutable('2026-09-06 10:05:00', new \DateTimeZone('Europe/Madrid')));
+
+        $orders = $this->createStub(OrderRepository::class);
+        $orders->method('ofId')->willReturn($order);
+
+        $read = (new GetOrderByIdQueryHandler($orders))(new GetOrderByIdQuery($order->id()->toString()));
+
+        self::assertSame('2026-09-06T08:05:00+00:00', $read->canceledAt, 'instants are reported in UTC');
+        self::assertNull($read->confirmedAt);
     }
 
     public function test_an_unknown_order_is_not_found(): void

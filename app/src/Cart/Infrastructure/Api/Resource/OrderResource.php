@@ -31,7 +31,7 @@ use Symfony\Component\Routing\Requirement\Requirement;
             errors: [],
             openapi: new Model\Operation(
                 summary: 'Get order by id',
-                description: 'The record a checkout left behind: the lines as they were paid, the captured total, and when the confirmation went out (`confirmedAt`, set by the worker).',
+                description: 'The record a checkout left behind: the lines as they were paid, the captured total, when the confirmation went out (`confirmedAt`, set by the worker) and whether the purchase was called off (`canceledAt`, set by cancelling the cart - a cancelled order is never confirmed).',
                 parameters: [
                     new Model\Parameter(
                         name: 'id',
