@@ -24,7 +24,8 @@
         <!-- Copied from the cart at checkout; null for an ownerless cart. -->
         <field name="customerId" column="customer_id" type="customer_id" length="64" nullable="true"/>
 
-        <field name="lines" column="lines" type="order_lines" nullable="false"/>
+        <!-- `order_lines`, not `lines`: LINES is a reserved word in MySQL. -->
+        <field name="lines" column="order_lines" type="order_lines" nullable="false"/>
 
         <field name="itemCount" column="item_count" type="integer" nullable="false"/>
 

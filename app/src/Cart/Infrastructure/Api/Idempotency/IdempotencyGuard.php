@@ -10,6 +10,7 @@ use Siroko\Cart\Infrastructure\Api\Security\CurrentCustomer;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpKernel\Exception\BadRequestHttpException;
+use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
 use Symfony\Component\HttpKernel\Exception\UnprocessableEntityHttpException;
 
 /**
@@ -56,11 +57,20 @@ final class IdempotencyGuard
     }
 
     /**
-     * Runs `$produce` unless the request's key already has an answer.
+     * Runs `$produce` unless the request's key already has an answer, or has
+     * one on the way.
+     *
+     * The key is claimed *before* the work: the claim is an insert on the
+     * table's primary key, so of several requests carrying the same new key
+     * exactly one gets to run and the rest are told, with a 409, that the
+     * original is still in flight. Recording only afterwards - which is what
+     * this used to do - stops a retry but not a race, and two clients sending
+     * one key at the same instant each created a cart and each reserved stock.
      *
      * Responses of every status below 500 are remembered - a 404 or a 409 is
-     * as final as a 201, and replaying it is what the client expects; a 500
-     * is not, since the retry may well succeed.
+     * as final as a 201, and replaying it is what the client expects. A 500 or
+     * an exception releases the claim instead, since neither says the retry
+     * would fail too.
      *
      * @param callable(): Response $produce
      */
@@ -80,25 +90,61 @@ final class IdempotencyGuard
         $scope = $this->customer->idOrNull() ?? '';
         $id = self::recordId($scope, $key);
         $fingerprint = self::fingerprint($request);
-        $record = $this->store->find($id);
 
-        if (null !== $record && !$record->isExpiredAt($now)) {
-            if (!$record->matches($fingerprint)) {
-                return $this->errors->toResponse(new UnprocessableEntityHttpException(\sprintf('The %s header was already used with a different request; use a new key for a new request.', self::HEADER)));
-            }
-
-            return $record->replay();
+        $answer = $this->answerFromRecord($this->store->find($id), $fingerprint, $now);
+        if (null !== $answer) {
+            return $answer;
         }
 
-        $response = $produce();
+        $claim = IdempotencyRecord::claim($id, $scope, $key, $fingerprint, $now, $this->ttl);
+
+        if (!$this->store->claim($claim)) {
+            // Somebody claimed it between the read above and this write.
+            return $this->answerFromRecord($this->store->find($id), $fingerprint, $now)
+                ?? $this->inFlight();
+        }
+
+        try {
+            $response = $produce();
+        } catch (\Throwable $e) {
+            $this->store->release($id);
+
+            throw $e;
+        }
 
         if ($response->getStatusCode() >= 500) {
+            $this->store->release($id);
+
             return $response;
         }
 
-        $this->store->save(IdempotencyRecord::capture($id, $scope, $key, $fingerprint, $response, $now, $this->ttl));
+        $this->store->complete($claim->completedWith($response, $now, $this->ttl));
 
         return $response;
+    }
+
+    /**
+     * What a record that is already there means for this request: nothing
+     * (null) when it is absent or expired and the caller should go on to
+     * claim it.
+     */
+    private function answerFromRecord(?IdempotencyRecord $record, string $fingerprint, \DateTimeImmutable $now): ?Response
+    {
+        if (null === $record || $record->isExpiredAt($now)) {
+            return null;
+        }
+
+        if (!$record->matches($fingerprint)) {
+            return $this->errors->toResponse(new UnprocessableEntityHttpException(\sprintf('The %s header was already used with a different request; use a new key for a new request.', self::HEADER)));
+        }
+
+        return $record->isPending() ? $this->inFlight() : $record->replay();
+    }
+
+    /** The original request holding this key has not answered yet. */
+    private function inFlight(): Response
+    {
+        return $this->errors->toResponse(new ConflictHttpException(\sprintf('A request with this %s is still being processed; retry in a moment.', self::HEADER)));
     }
 
     /**
