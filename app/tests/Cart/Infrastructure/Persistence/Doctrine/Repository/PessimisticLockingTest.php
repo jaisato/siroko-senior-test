@@ -63,10 +63,14 @@ final class PessimisticLockingTest extends KernelTestCase
         // is committed and therefore visible to the locking read below.
         self::$other = DriverManager::getConnection($em->getConnection()->getParams());
         $cartId = Uuid::uuid4();
+        // Raw SQL, because the row has to be committed on a connection of its
+        // own; that means naming every NOT NULL column, `created_at` included
+        // (Version20260906130000 added it and dropped its default once the
+        // existing rows were backfilled).
         self::$other->executeStatement(
-            'INSERT INTO cart (id, status) VALUES (?, ?)',
-            [$cartId->getBytes(), CartStatus::PENDING],
-            [ParameterType::BINARY, ParameterType::INTEGER],
+            'INSERT INTO cart (id, status, created_at) VALUES (?, ?, ?)',
+            [$cartId->getBytes(), CartStatus::PENDING, (new \DateTimeImmutable())->format('Y-m-d H:i:s')],
+            [ParameterType::BINARY, ParameterType::INTEGER, ParameterType::STRING],
         );
         self::$committedCarts[] = $cartId->getBytes();
 
