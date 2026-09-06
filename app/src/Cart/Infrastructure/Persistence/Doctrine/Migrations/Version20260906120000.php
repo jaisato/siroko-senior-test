@@ -26,6 +26,18 @@ final class Version20260906120000 extends AbstractMigration
         return 'orders: snapshot of a paid cart with its captured total and confirmation timestamp';
     }
 
+    /**
+     * The table starts empty, including for carts that were already paid.
+     *
+     * They cannot acquire an order later - checkout only accepts a pending
+     * cart - and they are not meant to: an order is a *snapshot* of the prices
+     * at the moment of payment, and those are exactly what a backfill from
+     * today's catalogue would get wrong. Nothing reads an order by cart in the
+     * application (OrderRepository::ofCart exists for tests and for a future
+     * lookup), so a paid cart without one is a gap in history, not a broken
+     * invariant. Aborting the migration over it would block every existing
+     * deployment for no gain.
+     */
     public function up(Schema $schema): void
     {
         $this->addSql(<<<'SQL'

@@ -24,4 +24,14 @@ final class InvalidStockAdjustmentException extends \DomainException
     {
         return new self(\sprintf('The delta must be an integer between -%d and %d.', $max, $max));
     }
+
+    /**
+     * `quantity` is a signed INT and the sum happens in the database, so units
+     * that do not fit cannot simply be added: saying so beats an out-of-range
+     * error the client reads as a 500, and beats dropping the units in silence.
+     */
+    public static function wouldExceedMaximum(int $max): self
+    {
+        return new self(\sprintf('Stock cannot exceed %d units.', $max));
+    }
 }

@@ -8,6 +8,7 @@ use Doctrine\DBAL\Exception\UniqueConstraintViolationException;
 use Doctrine\ORM\EntityManagerInterface;
 use Ramsey\Uuid\Uuid;
 use Siroko\Cart\Domain\Entity\Product;
+use Siroko\Cart\Domain\Exception\InvalidStockAdjustmentException;
 use Siroko\Cart\Domain\Repository\ProductCriteria;
 use Siroko\Cart\Domain\Repository\ProductRepository;
 use Siroko\Cart\Domain\ValueObject\Name;
@@ -99,6 +100,27 @@ final class DoctrineProductRepositoryTest extends KernelTestCase
 
         self::assertSame(4, $product->quantity()->asInt());
         self::assertSame(4, $this->stockInDatabase($product));
+    }
+
+    /**
+     * `quantity` is a signed INT and the sum happens in the database, so
+     * `{"delta":1}` on a product already at the maximum used to leave MySQL to
+     * refuse it - an out-of-range error the client read as a 500. The ceiling
+     * belongs in the same UPDATE as the increment, like the floor of a
+     * reservation, and what does not fit is said out loud rather than dropped.
+     */
+    public function test_stock_that_would_pass_the_maximum_is_refused_rather_than_overflowing(): void
+    {
+        $product = $this->product(stock: Quantity::MAX_QUANTITY);
+
+        try {
+            $this->repository->returnStock($product->id(), 1);
+            self::fail('returning units past the maximum must be refused');
+        } catch (InvalidStockAdjustmentException $refused) {
+            self::assertStringContainsString((string) Quantity::MAX_QUANTITY, $refused->getMessage());
+        }
+
+        self::assertSame(Quantity::MAX_QUANTITY, $this->stockInDatabase($product), 'nothing was added');
     }
 
     public function test_stock_movements_on_an_unknown_product_touch_nothing(): void

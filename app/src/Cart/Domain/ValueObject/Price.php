@@ -24,6 +24,21 @@ use Siroko\Cart\Domain\Exception\PriceIsNotSameCurrencyException;
  */
 final class Price implements \Stringable, \JsonSerializable
 {
+    /**
+     * The largest unit price the system can carry through to an order.
+     *
+     * `product.price_amount` and `orders.total_amount` are both
+     * NUMERIC(19, 4): fifteen integral digits. A cart holds at most
+     * CreateCartCommand::MAX_LINES (50) lines of CartItem::MAX_QUANTITY (100)
+     * units, so the biggest total a valid cart can reach is 5 000 times the
+     * dearest line. Accepting a unit price the column can hold but whose
+     * total it cannot meant a perfectly valid cart failed at checkout with an
+     * out-of-range error the client saw as a 500; the price itself is where
+     * that has to be refused. 99 999 999 999.9999 x 5 000 is
+     * 499 999 999 999 999.5 - inside the column, with room to spare.
+     */
+    public const MAX_AMOUNT = '99999999999.9999';
+
     /** Decimal string, e.g. "19.99". Hydrated rows carry the column scale ("19.9900"). */
     private string $amount;
 
@@ -57,11 +72,7 @@ final class Price implements \Stringable, \JsonSerializable
             throw InvalidPriceException::malformedAmount();
         }
 
-        if ($money->isNegative()) {
-            throw InvalidPriceException::negative();
-        }
-
-        return new self($money);
+        return self::checked($money);
     }
 
     /**
@@ -77,8 +88,23 @@ final class Price implements \Stringable, \JsonSerializable
             throw InvalidPriceException::malformedAmount();
         }
 
+        return self::checked($money);
+    }
+
+    /**
+     * The two bounds a price has: it is not negative, and it is small enough
+     * that a full cart of it still fits the columns money is stored in.
+     *
+     * @throws InvalidPriceException
+     */
+    private static function checked(BrickMoney $money): self
+    {
         if ($money->isNegative()) {
             throw InvalidPriceException::negative();
+        }
+
+        if ($money->getAmount()->compareTo(self::MAX_AMOUNT) > 0) {
+            throw InvalidPriceException::tooLarge(self::MAX_AMOUNT);
         }
 
         return new self($money);

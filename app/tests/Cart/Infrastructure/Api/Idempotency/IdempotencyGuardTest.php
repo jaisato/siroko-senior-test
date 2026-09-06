@@ -130,6 +130,36 @@ final class IdempotencyGuardTest extends TestCase
         self::assertSame(2, $this->executions);
     }
 
+    /**
+     * Storing the answer is a second write, after the cart's own transaction
+     * has committed; a process killed in that gap leaves a claim nobody will
+     * complete. On one shared lifetime that claim answered "in flight" for the
+     * whole retention window - an hour here - in which the client could neither
+     * recover its cart nor retry. A claim only holds a short lease; the long
+     * life is what answering buys.
+     */
+    public function test_a_claim_that_never_answered_expires_on_its_lease_not_on_the_retention_window(): void
+    {
+        $guard = $this->guard(ttlSeconds: 3600);
+
+        // The request runs, but the process dies before its answer is stored.
+        $this->store->loseNextCompletion = true;
+        $guard->respond(self::request(key: 'lost'), $this->producer(201));
+
+        // And one that got all the way through.
+        $guard->respond(self::request(key: 'answered'), $this->producer(201, ['id' => 'cart-1']));
+
+        $this->clock->modify(\sprintf('+%d seconds', IdempotencyGuard::IN_PROGRESS_LEASE_SECONDS + 1));
+
+        $guard->respond(self::request(key: 'lost'), $this->producer(201));
+        self::assertSame(3, $this->executions, 'the abandoned claim let go, so the retry ran for real');
+
+        $replayed = $guard->respond(self::request(key: 'answered'), $this->producer(201, ['id' => 'cart-2']));
+        self::assertSame('true', $replayed->headers->get(IdempotencyRecord::REPLAYED_HEADER));
+        self::assertStringContainsString('cart-1', (string) $replayed->getContent(), 'an answer keeps the full hour');
+        self::assertSame(3, $this->executions);
+    }
+
     /** Two customers may use the same key without ever seeing each other's response. */
     public function test_keys_are_scoped_to_the_customer(): void
     {
@@ -297,6 +327,12 @@ final class InMemoryIdempotencyStore implements IdempotencyStore
      */
     public ?IdempotencyRecord $claimedByAnother = null;
 
+    /**
+     * Drops the next complete(), the way a process killed between the business
+     * write and its stored answer does: the claim stays, unanswered, forever.
+     */
+    public bool $loseNextCompletion = false;
+
     public function find(string $id): ?IdempotencyRecord
     {
         return $this->records[$id] ?? null;
@@ -323,6 +359,12 @@ final class InMemoryIdempotencyStore implements IdempotencyStore
 
     public function complete(IdempotencyRecord $record): void
     {
+        if ($this->loseNextCompletion) {
+            $this->loseNextCompletion = false;
+
+            return;
+        }
+
         $this->records[$record->id()] = $record;
     }
 

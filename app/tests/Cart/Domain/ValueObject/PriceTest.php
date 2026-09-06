@@ -77,6 +77,23 @@ final class PriceTest extends TestCase
         self::assertSame('1500', Price::of('1500', 'JPY')->amount());
     }
 
+    /**
+     * A cart holds at most 50 lines of 100 units, so a unit price the column
+     * can hold is not enough: five thousand of it must fit too. Accepting more
+     * meant a valid cart blew up on the orders insert at checkout, as a 500.
+     */
+    public function test_an_amount_too_large_for_a_full_cart_is_rejected(): void
+    {
+        // MAX_AMOUNT carries the column's four decimals; EUR allows two, so
+        // the dearest euro price is that ceiling at the currency's own scale.
+        self::assertSame('99999999999.99', Price::of('99999999999.99', 'EUR')->amount());
+
+        $this->expectException(InvalidPriceException::class);
+        $this->expectExceptionMessage('cannot be greater than');
+
+        Price::of('100000000000.00', 'EUR');
+    }
+
     public function test_a_negative_amount_is_rejected(): void
     {
         $this->expectException(InvalidPriceException::class);
