@@ -9,6 +9,7 @@ use Doctrine\DBAL\Exception\UniqueConstraintViolationException;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\AbstractLogger;
+use Psr\Log\NullLogger;
 use Ramsey\Uuid\Uuid;
 use Siroko\Cart\Domain\Exception\CartItemNotFoundException;
 use Siroko\Cart\Domain\Exception\CartNotFoundException;
@@ -43,7 +44,7 @@ final class ApiExceptionMapperTest extends TestCase
     #[DataProvider('domainExceptions')]
     public function test_domain_exceptions_map_to_their_status_and_keep_their_message(\Throwable $exception, int $status): void
     {
-        $response = (new ApiExceptionMapper())->toResponse($exception);
+        $response = (new ApiExceptionMapper(new NullLogger()))->toResponse($exception);
 
         self::assertSame($status, $response->getStatusCode());
         self::assertSame('application/problem+json', $response->headers->get('Content-Type'));
@@ -88,7 +89,7 @@ final class ApiExceptionMapperTest extends TestCase
 
     public function test_http_exceptions_keep_their_status_message_and_headers(): void
     {
-        $response = (new ApiExceptionMapper())->toResponse(new TooManyRequestsHttpException(30, 'Slow down'));
+        $response = (new ApiExceptionMapper(new NullLogger()))->toResponse(new TooManyRequestsHttpException(30, 'Slow down'));
 
         self::assertSame(429, $response->getStatusCode());
         self::assertSame('30', $response->headers->get('Retry-After'));
@@ -98,7 +99,7 @@ final class ApiExceptionMapperTest extends TestCase
 
     public function test_a_bad_request_exception_is_a_400_problem(): void
     {
-        $response = (new ApiExceptionMapper())->toResponse(new BadRequestHttpException('A JSON body is required.'));
+        $response = (new ApiExceptionMapper(new NullLogger()))->toResponse(new BadRequestHttpException('A JSON body is required.'));
 
         self::assertSame(400, $response->getStatusCode());
         self::assertSame('A JSON body is required.', self::decode($response->getContent())['detail']);
@@ -110,7 +111,7 @@ final class ApiExceptionMapperTest extends TestCase
         $driver = new DriverException('SQLSTATE[23000]: Integrity constraint violation: 1062 Duplicate entry', '23000', 1062);
         $exception = new UniqueConstraintViolationException($driver, null);
 
-        $response = (new ApiExceptionMapper())->toResponse($exception);
+        $response = (new ApiExceptionMapper(new NullLogger()))->toResponse($exception);
 
         self::assertSame(409, $response->getStatusCode());
         $detail = self::decode($response->getContent())['detail'];
@@ -140,13 +141,6 @@ final class ApiExceptionMapperTest extends TestCase
         self::assertCount(1, $logger->records);
         self::assertSame('error', $logger->records[0]['level']);
         self::assertSame($secret, $logger->records[0]['context']['exception']);
-    }
-
-    public function test_it_works_without_a_logger(): void
-    {
-        $response = (new ApiExceptionMapper())->toResponse(new \LogicException('boom'));
-
-        self::assertSame(500, $response->getStatusCode());
     }
 
     /**

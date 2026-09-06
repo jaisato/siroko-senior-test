@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Siroko\Tests\Cart\Infrastructure\Api\Security;
 
 use PHPUnit\Framework\TestCase;
+use Psr\Log\NullLogger;
 use Siroko\Cart\Infrastructure\Api\ApiExceptionMapper;
 use Siroko\Cart\Infrastructure\Api\Security\ApiCustomer;
 use Siroko\Cart\Infrastructure\Api\Security\ApiTokenAuthenticator;
@@ -115,6 +116,6 @@ final class ApiTokenAuthenticatorTest extends TestCase
 
     private function authenticator(ApiTokens $tokens): ApiTokenAuthenticator
     {
-        return new ApiTokenAuthenticator($tokens, new ApiExceptionMapper(), '/api');
+        return new ApiTokenAuthenticator($tokens, new ApiExceptionMapper(new NullLogger()), '/api');
     }
 }
