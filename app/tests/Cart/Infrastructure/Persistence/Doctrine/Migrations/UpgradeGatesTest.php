@@ -10,6 +10,7 @@ use Doctrine\Migrations\AbstractMigration;
 use Doctrine\Migrations\Exception\AbortMigration;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\NullLogger;
+use Siroko\Cart\Domain\Entity\Cart;
 use Siroko\Cart\Domain\Entity\CartItem;
 use Siroko\Cart\Infrastructure\Persistence\Doctrine\Migrations\Version20260905120000;
 use Siroko\Cart\Infrastructure\Persistence\Doctrine\Migrations\Version20260906100000;
@@ -38,7 +39,7 @@ final class UpgradeGatesTest extends TestCase
     public function test_the_code_column_is_made_case_sensitive_before_the_unique_index(): void
     {
         $asked = [];
-        $migration = new Version20260905120000($this->connection($asked, []), new NullLogger());
+        $migration = new Version20260905120000($this->connection($asked, [[]]), new NullLogger());
 
         $migration->preUp(new Schema());
         $migration->up(new Schema());
@@ -55,7 +56,7 @@ final class UpgradeGatesTest extends TestCase
     public function test_two_products_under_one_code_stop_the_upgrade_and_are_named(): void
     {
         $asked = [];
-        $migration = new Version20260905120000($this->connection($asked, ['K3']), new NullLogger());
+        $migration = new Version20260905120000($this->connection($asked, [['K3']]), new NullLogger());
 
         $this->expectException(AbortMigration::class);
         $this->expectExceptionMessage('K3');
@@ -72,7 +73,7 @@ final class UpgradeGatesTest extends TestCase
     public function test_the_price_ceiling_gate_looks_only_at_products_still_on_sale(): void
     {
         $asked = [];
-        $migration = new Version20260906190000($this->connection($asked, []), new NullLogger());
+        $migration = new Version20260906190000($this->connection($asked, [[]]), new NullLogger());
 
         $migration->preUp(new Schema());
 
@@ -83,7 +84,7 @@ final class UpgradeGatesTest extends TestCase
     public function test_a_product_on_sale_above_the_price_ceiling_stops_the_upgrade(): void
     {
         $asked = [];
-        $migration = new Version20260906190000($this->connection($asked, ['B1']), new NullLogger());
+        $migration = new Version20260906190000($this->connection($asked, [['B1']]), new NullLogger());
 
         $this->expectException(AbortMigration::class);
         $this->expectExceptionMessage('B1');
@@ -97,11 +98,11 @@ final class UpgradeGatesTest extends TestCase
      * from that limit, so such a cart checks out into a total the money columns
      * do not fit.
      */
-    public function test_a_pending_cart_over_the_line_limit_stops_the_collapse(): void
+    public function test_a_pending_cart_over_the_unit_limit_stops_the_collapse(): void
     {
         $asked = [];
         $migration = new Version20260906100000(
-            $this->connection($asked, ['0b6d… (150 units of K3)']),
+            $this->connection($asked, [['0b6d… (150 units of K3)']]),
             new NullLogger(),
         );
 
@@ -111,34 +112,65 @@ final class UpgradeGatesTest extends TestCase
         $migration->preUp(new Schema());
     }
 
-    public function test_the_line_limit_gate_looks_only_at_carts_that_can_still_be_checked_out(): void
+    /**
+     * Price::MAX_AMOUNT is computed from both bounds together, so gating only
+     * the units left the other way in: 101 products of 100 rows each passed,
+     * and at the highest unit price that cart overflows the order total
+     * exactly like a single line of 150 would.
+     */
+    public function test_a_pending_cart_over_the_distinct_line_limit_stops_the_collapse(): void
     {
         $asked = [];
-        $migration = new Version20260906100000($this->connection($asked, []), new NullLogger());
+        // Nothing over the unit limit; the second question is the one that answers.
+        $migration = new Version20260906100000(
+            $this->connection($asked, [[], ['0b6d… (101 products)']]),
+            new NullLogger(),
+        );
+
+        $this->expectException(AbortMigration::class);
+        $this->expectExceptionMessage('101 products');
+
+        $migration->preUp(new Schema());
+    }
+
+    public function test_both_line_gates_look_only_at_carts_that_can_still_be_checked_out(): void
+    {
+        $asked = [];
+        $migration = new Version20260906100000($this->connection($asked, [[], []]), new NullLogger());
 
         $migration->preUp(new Schema());
 
-        self::assertCount(1, $asked);
-        self::assertStringContainsString('c.status = :pending', $asked[0]['sql']);
+        self::assertCount(2, $asked, 'units per line, and lines per cart');
+        foreach ($asked as $question) {
+            self::assertStringContainsString('c.status = :pending', $question['sql']);
+        }
         self::assertSame(CartItem::MAX_QUANTITY, $asked[0]['params']['limit'] ?? null);
+        self::assertSame(Cart::MAX_LINES, $asked[1]['params']['limit'] ?? null);
+
+        // cart.id is BINARY(16); concatenated raw it is sixteen bytes of noise
+        // rather than the id the operator is asked to act on.
+        foreach ($asked as $question) {
+            self::assertStringContainsString('BIN_TO_UUID(i.cart_id)', $question['sql']);
+        }
     }
 
     /**
-     * A connection that records every question asked of it and answers each
-     * with the same canned column.
+     * A connection that records every question asked of it and answers them in
+     * turn from `$answers` - a migration with two gates asks twice, and each
+     * has to be able to answer differently.
      *
-     * @param array<int, array{sql: string, params: array<string, mixed>}> $asked filled as the migration reads
-     * @param list<string>                                                 $answer
+     * @param array<int, array{sql: string, params: array<string, mixed>}> $asked   filled as the migration reads
+     * @param list<list<string>>                                           $answers one per question, in order
      */
-    private function connection(array &$asked, array $answer): Connection
+    private function connection(array &$asked, array $answers): Connection
     {
         $connection = $this->createStub(Connection::class);
         $connection->method('fetchFirstColumn')->willReturnCallback(
             /** @param array<string, mixed> $params */
-            static function (string $sql, array $params = []) use (&$asked, $answer): array {
+            static function (string $sql, array $params = []) use (&$asked, $answers): array {
                 $asked[] = ['sql' => $sql, 'params' => $params];
 
-                return $answer;
+                return $answers[\count($asked) - 1] ?? [];
             },
         );
 
