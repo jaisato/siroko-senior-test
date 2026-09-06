@@ -162,8 +162,16 @@ class CartItem
     }
 
     /**
-     * Copies the price this line is settling at. Called by Cart::pay(), the
-     * one moment the amount stops being an offer and becomes what was paid.
+     * Copies the price this line is settling at.
+     *
+     * Called by Cart::pay() and by Cart::cancel(): the two moments the amount
+     * stops being an offer, because after either the cart is a record of what
+     * was in it and no longer something the catalogue may move.
+     *
+     * Idempotent in the sense that matters: a paid cart that is then canceled
+     * re-reads the product, which by then is the price it was paid at unless
+     * the catalogue moved in between - and a canceled cart's lines are read by
+     * nobody who is charged for them.
      */
     public function capturePrice(): void
     {

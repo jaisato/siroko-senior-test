@@ -393,6 +393,18 @@ class Cart
             throw new InvalidCartStatusException('Cart is neither pending nor paid');
         }
 
+        // Same reason as pay(), one step earlier. A cart canceled while still
+        // pending never went through pay(), so its lines kept reading the
+        // product - and a canceled cart is still readable, while the checks
+        // that keep a live cart's currencies in step only look at pending ones.
+        // Reprice one product of a canceled two-product EUR cart into USD and
+        // every later GET of it answered 409 on a cart nobody can act on
+        // anyway. What the customer had in front of them when they called it
+        // off is the honest thing for it to keep showing.
+        foreach ($this->items as $item) {
+            $item->capturePrice();
+        }
+
         $this->status = CartStatus::canceled();
         $this->expiresAt = null;
     }
