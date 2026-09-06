@@ -34,6 +34,7 @@
         "symfony/flex": "^2.11.0",
         "symfony/framework-bundle": "7.4.*",
         "symfony/messenger": "7.4.*",
+        "symfony/monolog-bundle": "^4.0",
         "symfony/property-access": "7.4.*",
         "symfony/property-info": "7.4.*",
         "symfony/runtime": "7.4.*",

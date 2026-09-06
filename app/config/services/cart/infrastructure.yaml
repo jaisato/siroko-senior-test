@@ -78,10 +78,10 @@ services:
 
     # Maps an exception onto the API's error response. Registered next to the
     # controllers that inject it; there is no broad App\ glob in this project,
-    # so a class under src/ is not a service until it is named here.
-    Siroko\Cart\Infrastructure\Api\ApiExceptionMapper:
-        arguments:
-            $logger: '@?logger'
+    # so a class under src/ is not a service until it is named here. Its
+    # logger is Monolog's, autowired: an unexpected exception the controllers
+    # swallow is only ever recorded here.
+    Siroko\Cart\Infrastructure\Api\ApiExceptionMapper: ~
 
     # Same contract for the errors raised before any controller runs (404 on an
     # unknown route or a malformed id, 405, 406).

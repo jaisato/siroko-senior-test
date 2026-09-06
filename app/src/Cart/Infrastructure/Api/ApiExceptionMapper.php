@@ -47,7 +47,10 @@ use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
  *   paths, host names, and in the case of a connection failure the DSN itself.
  *
  * Deliberate exceptions carry their own status and a message written to be
- * read. Anything else is a bug, and its message stays in the log.
+ * read. Anything else is a bug, and its message stays in the log - which is
+ * why the logger is not optional: the controllers catch everything, so the
+ * kernel's own error listener never sees these exceptions, and this is the
+ * only record a 500 leaves.
  *
  * The body follows RFC 7807 (`application/problem+json`): `type`, `title`,
  * `status` and `detail`. API Platform answers the errors it raises itself -
@@ -89,7 +92,7 @@ final class ApiExceptionMapper
         NameInvalidLengthException::class => Response::HTTP_BAD_REQUEST,
     ];
 
-    public function __construct(private readonly ?LoggerInterface $logger = null) {}
+    public function __construct(private readonly LoggerInterface $logger) {}
 
     public function toResponse(\Throwable $e): JsonResponse
     {
@@ -118,7 +121,10 @@ final class ApiExceptionMapper
             return $this->problem('A resource with the same unique key already exists.', Response::HTTP_CONFLICT);
         }
 
-        $this->logger?->error('Unhandled API exception', ['exception' => $e]);
+        // The exception travels as context, so the formatter writes its class,
+        // message, location and - in prod, where stack traces are switched on -
+        // its trace, none of which the client gets to see.
+        $this->logger->error('Unhandled API exception', ['exception' => $e]);
 
         return $this->problem('An unexpected error occurred.', Response::HTTP_INTERNAL_SERVER_ERROR);
     }

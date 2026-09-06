@@ -19,14 +19,3 @@ services:
 
 imports:
     - { resource: 'services/cart/' }
-
-when@test:
-    services:
-        # Without Monolog the framework logger writes to stderr, which PHPUnit
-        # reports as unexpected output. Test logs go to var/log/test.log instead,
-        # where a failing CI run can still be investigated.
-        logger:
-            class: Symfony\Component\HttpKernel\Log\Logger
-            arguments:
-                $minLevel: 'debug'
-                $output: '%kernel.logs_dir%/%kernel.environment%.log'

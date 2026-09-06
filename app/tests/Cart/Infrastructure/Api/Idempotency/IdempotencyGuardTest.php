@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Siroko\Tests\Cart\Infrastructure\Api\Idempotency;
 
 use PHPUnit\Framework\TestCase;
+use Psr\Log\NullLogger;
 use Siroko\Cart\Infrastructure\Api\ApiExceptionMapper;
 use Siroko\Cart\Infrastructure\Api\Idempotency\IdempotencyGuard;
 use Siroko\Cart\Infrastructure\Api\Idempotency\IdempotencyRecord;
@@ -183,7 +184,7 @@ final class IdempotencyGuardTest extends TestCase
         $security = $this->createStub(Security::class);
         $security->method('getUser')->willReturn(null === $customer ? null : new ApiCustomer(CustomerId::fromString($customer)));
 
-        return new IdempotencyGuard($this->store, new CurrentCustomer($security), $this->clock, new ApiExceptionMapper(), $ttlSeconds);
+        return new IdempotencyGuard($this->store, new CurrentCustomer($security), $this->clock, new ApiExceptionMapper(new NullLogger()), $ttlSeconds);
     }
 
     /**
