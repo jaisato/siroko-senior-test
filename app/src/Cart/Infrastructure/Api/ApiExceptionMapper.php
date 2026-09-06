@@ -8,6 +8,7 @@ use Doctrine\DBAL\Exception\UniqueConstraintViolationException;
 use Psr\Log\LoggerInterface;
 use Siroko\Cart\Domain\Exception\CartItemNotFoundException;
 use Siroko\Cart\Domain\Exception\CartNotFoundException;
+use Siroko\Cart\Domain\Exception\CartIsFullException;
 use Siroko\Cart\Domain\Exception\DuplicateProductCodeException;
 use Siroko\Cart\Domain\Exception\EmptyCartException;
 use Siroko\Cart\Domain\Exception\InvalidCartLineException;
@@ -80,6 +81,9 @@ final class ApiExceptionMapper
         // The request is well formed; it clashes with the currency the cart
         // already holds, which is the cart's state, hence a conflict.
         PriceIsNotSameCurrencyException::class => Response::HTTP_CONFLICT,
+        // Same reasoning: the payload is fine, the cart is what will not take
+        // it, and what resolves it is a line removed or a checkout.
+        CartIsFullException::class => Response::HTTP_CONFLICT,
         InvalidCartLineException::class => Response::HTTP_BAD_REQUEST,
         InvalidCustomerIdException::class => Response::HTTP_BAD_REQUEST,
         InvalidProductCriteriaException::class => Response::HTTP_BAD_REQUEST,

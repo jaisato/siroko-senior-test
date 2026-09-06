@@ -30,7 +30,14 @@
         <!-- Set while pending; a paid or canceled cart reserves nothing. -->
         <field name="expiresAt" column="expires_at" type="datetime_immutable" nullable="true"/>
 
-        <!-- Null for a cart opened while the API ran without authentication. -->
+        <!--
+            Null for a cart opened while the API ran without authentication.
+
+            The column is utf8mb4_bin on MySQL (Version20260906170000), so it
+            compares byte for byte like CustomerId does. It is not declared
+            here on purpose: the schema tool would then emit the collation on
+            SQLite too, where the name does not exist and CREATE TABLE fails.
+        -->
         <field name="customerId" column="customer_id" type="customer_id" length="64" nullable="true"/>
 
         <one-to-many field="items"

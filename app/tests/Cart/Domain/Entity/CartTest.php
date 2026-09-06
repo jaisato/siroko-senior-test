@@ -10,6 +10,7 @@ use Ramsey\Uuid\Uuid;
 use Siroko\Cart\Domain\Entity\Cart;
 use Siroko\Cart\Domain\Entity\CartItem;
 use Siroko\Cart\Domain\Entity\Product;
+use Siroko\Cart\Domain\Exception\CartIsFullException;
 use Siroko\Cart\Domain\Exception\CartNotFoundException;
 use Siroko\Cart\Domain\Exception\EmptyCartException;
 use Siroko\Cart\Domain\Exception\InvalidCartStatusException;
@@ -433,6 +434,59 @@ final class CartTest extends TestCase
         $this->expectExceptionMessage('not pending');
 
         $cart->ensurePending();
+    }
+
+    /**
+     * The cap was checked only where a whole cart arrives at once, so a client
+     * adding products one request at a time walked past it. It is not a round
+     * number for the sake of it: Price::MAX_AMOUNT is computed from it, and a
+     * cart with more lines can build a total wider than orders.total_amount
+     * and fail at checkout with a 500, having been accepted all the way there.
+     */
+    public function test_a_cart_refuses_a_product_past_its_line_limit(): void
+    {
+        $cart = self::cart();
+
+        for ($line = 0; $line < Cart::MAX_LINES; ++$line) {
+            $cart->addProduct(ItemId::fromString(Uuid::uuid4()->toString()), self::product(), new Quantity(1));
+        }
+
+        self::assertCount(Cart::MAX_LINES, $cart->items());
+
+        $this->expectException(CartIsFullException::class);
+        $this->expectExceptionMessage('at most ' . Cart::MAX_LINES . ' distinct products');
+
+        $cart->addProduct(ItemId::fromString(Uuid::uuid4()->toString()), self::product(), new Quantity(1));
+    }
+
+    /** More units of a product the cart already holds is not another line. */
+    public function test_a_full_cart_still_takes_more_of_what_it_already_holds(): void
+    {
+        $cart = self::cart();
+        $first = self::product();
+        $cart->addProduct(ItemId::fromString(Uuid::uuid4()->toString()), $first, new Quantity(1));
+
+        for ($line = 1; $line < Cart::MAX_LINES; ++$line) {
+            $cart->addProduct(ItemId::fromString(Uuid::uuid4()->toString()), self::product(), new Quantity(1));
+        }
+
+        $cart->addProduct(ItemId::fromString(Uuid::uuid4()->toString()), $first, new Quantity(2));
+
+        self::assertCount(Cart::MAX_LINES, $cart->items());
+    }
+
+    /** The ready-made line takes the same road and meets the same cap. */
+    public function test_the_line_limit_holds_however_the_line_arrives(): void
+    {
+        $cart = self::cart();
+
+        for ($line = 0; $line < Cart::MAX_LINES; ++$line) {
+            $cart->addProduct(ItemId::fromString(Uuid::uuid4()->toString()), self::product(), new Quantity(1));
+        }
+
+        $this->expectException(CartIsFullException::class);
+
+        $cart->addItem(self::item());
     }
 
     private static function cart(): Cart

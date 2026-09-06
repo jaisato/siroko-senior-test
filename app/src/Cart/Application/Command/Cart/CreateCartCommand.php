@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Siroko\Cart\Application\Command\Cart;
 
+use Siroko\Cart\Domain\Entity\Cart;
 use Siroko\Cart\Domain\Entity\CartItem;
 use Siroko\Cart\Domain\Exception\InvalidCartLineException;
 use Siroko\Cart\Domain\Exception\InvalidCustomerIdException;
@@ -32,7 +33,12 @@ final class CreateCartCommand
      */
     public const MAX_ORDERED_QUANTITY = CartItem::MAX_QUANTITY;
 
-    public const MAX_LINES = 50;
+    /**
+     * Most lines one cart holds; the cap belongs to the cart itself (see Cart)
+     * and is checked here as well so that a request over it is refused before
+     * any stock is touched.
+     */
+    public const MAX_LINES = Cart::MAX_LINES;
 
     /**
      * @var list<CartLine>

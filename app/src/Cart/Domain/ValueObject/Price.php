@@ -29,7 +29,7 @@ final class Price implements \Stringable, \JsonSerializable
      *
      * `product.price_amount` and `orders.total_amount` are both
      * NUMERIC(19, 4): fifteen integral digits. A cart holds at most
-     * CreateCartCommand::MAX_LINES (50) lines of CartItem::MAX_QUANTITY (100)
+     * Cart::MAX_LINES (50) lines of CartItem::MAX_QUANTITY (100)
      * units, so the biggest total a valid cart can reach is 5 000 times the
      * dearest line. Accepting a unit price the column can hold but whose
      * total it cannot meant a perfectly valid cart failed at checkout with an

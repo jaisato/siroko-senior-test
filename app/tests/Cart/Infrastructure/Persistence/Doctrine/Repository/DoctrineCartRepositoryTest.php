@@ -20,6 +20,7 @@ use Siroko\Cart\Domain\ValueObject\Price;
 use Siroko\Cart\Domain\ValueObject\ProductCode;
 use Siroko\Cart\Domain\ValueObject\ProductId;
 use Siroko\Cart\Domain\ValueObject\Quantity;
+use PHPUnit\Framework\Attributes\Group;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
 
 /**
@@ -172,6 +173,33 @@ final class DoctrineCartRepositoryTest extends KernelTestCase
         self::assertSame(5, $this->repository->countMatching(null, null), 'no owner: every cart');
         self::assertCount(5, $this->repository->search(null, null, 1, 10));
         self::assertSame(0, $this->repository->countMatching(CustomerId::fromString('carol'), null));
+    }
+
+    /**
+     * CustomerId compares byte for byte, so "alice" and "Alice" are two
+     * customers. The column inherited MySQL's case-insensitive default
+     * collation and matched both, and the listing handed one customer the
+     * other's cart ids, contents and totals.
+     *
+     * MySQL only: SQLite compares TEXT byte for byte already and would pass
+     * whatever the column says, so it cannot tell the two apart.
+     */
+    #[Group('mysql')]
+    public function test_owners_whose_ids_differ_only_in_case_are_different_customers(): void
+    {
+        $now = new \DateTimeImmutable('2026-09-06 10:00:00', new \DateTimeZone('UTC'));
+        $lower = new Cart($this->repository->nextIdentity(), CartStatus::pending(), $now, null, CustomerId::fromString('alice'));
+        $upper = new Cart($this->repository->nextIdentity(), CartStatus::pending(), $now, null, CustomerId::fromString('Alice'));
+
+        foreach ([$lower, $upper] as $cart) {
+            $this->repository->save($cart);
+        }
+
+        $found = $this->repository->search(CustomerId::fromString('alice'), null, 1, 10);
+
+        self::assertSame([$lower->id()->toString()], array_map(static fn(Cart $cart): string => $cart->id()->toString(), $found));
+        self::assertSame(1, $this->repository->countMatching(CustomerId::fromString('alice'), null));
+        self::assertSame(1, $this->repository->countMatching(CustomerId::fromString('Alice'), null));
     }
 
     public function test_an_unknown_cart_is_null(): void
