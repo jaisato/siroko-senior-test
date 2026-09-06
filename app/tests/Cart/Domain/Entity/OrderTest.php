@@ -139,6 +139,38 @@ final class OrderTest extends TestCase
         self::assertSame($line->toArray(), $rebuilt->toArray());
     }
 
+    /**
+     * A paid cart can be cancelled, and the order is the record of what was
+     * bought. Left standing, it was still confirmed by the queued
+     * CartCheckedOut consumer - which only asked whether the confirmation had
+     * already been sent - so the customer was confirmed of a purchase they had
+     * called off.
+     */
+    public function test_a_cancelled_order_is_never_confirmed(): void
+    {
+        $order = Order::place(OrderId::fromString(Uuid::uuid4()->toString()), self::paidCart([['Gafas', 'K3', '10.00', 1]]), self::now());
+        $cancelledAt = new \DateTimeImmutable('2026-09-06 10:05:00', new \DateTimeZone('UTC'));
+
+        self::assertTrue($order->cancel($cancelledAt));
+        self::assertTrue($order->isCanceled());
+        self::assertSame($cancelledAt, $order->canceledAt());
+
+        self::assertFalse($order->confirm(new \DateTimeImmutable('2026-09-06 11:00:00', new \DateTimeZone('UTC'))));
+        self::assertFalse($order->isConfirmed());
+        self::assertNull($order->confirmedAt());
+    }
+
+    /** Cancelling twice keeps the first timestamp, like confirming twice. */
+    public function test_cancelling_is_idempotent(): void
+    {
+        $order = Order::place(OrderId::fromString(Uuid::uuid4()->toString()), self::paidCart([['Gafas', 'K3', '10.00', 1]]), self::now());
+        $first = new \DateTimeImmutable('2026-09-06 10:05:00', new \DateTimeZone('UTC'));
+
+        self::assertTrue($order->cancel($first));
+        self::assertFalse($order->cancel(new \DateTimeImmutable('2026-09-06 11:00:00', new \DateTimeZone('UTC'))));
+        self::assertSame($first, $order->canceledAt());
+    }
+
     public function test_a_line_round_trips_through_its_array_form(): void
     {
         $cart = self::paidCart([['Gafas', 'K3', '129.95', 2]]);

@@ -102,6 +102,57 @@ final class CartTest extends TestCase
         self::assertSame(CartStatus::PAID, $cart->status()->toInt());
     }
 
+    /**
+     * A line points at a product, and a product changes. Reading the price live
+     * is right while the cart is pending - the customer sees today's price -
+     * and wrong the moment it is paid for: the total of a completed purchase
+     * moved with the catalogue, and a reprice into another currency made
+     * subtotal() throw from then on, so reading the cart answered 409 and the
+     * queued confirmation rolled back for a purchase that was finished.
+     */
+    public function test_a_paid_cart_keeps_the_prices_it_was_paid_at(): void
+    {
+        $product = self::product('10.00', 'EUR');
+        $cart = self::cart();
+        $cart->addProduct(ItemId::fromString(Uuid::uuid4()->toString()), $product, new Quantity(3));
+        $cart->pay();
+
+        $product->setPrice(Price::of('99.00', 'USD'));
+
+        self::assertSame('30.00', $cart->subtotal()?->amount());
+        self::assertSame('EUR', $cart->currency()?->getCurrencyCode());
+        self::assertSame('30.00', $cart->total()?->amount());
+    }
+
+    /** A pending cart is an offer: it follows the catalogue, on purpose. */
+    public function test_a_pending_cart_follows_the_current_price(): void
+    {
+        $product = self::product('10.00', 'EUR');
+        $cart = self::cart();
+        $cart->addProduct(ItemId::fromString(Uuid::uuid4()->toString()), $product, new Quantity(3));
+
+        $product->setPrice(Price::of('12.00', 'EUR'));
+
+        self::assertSame('36.00', $cart->subtotal()?->amount());
+    }
+
+    /**
+     * The reason the currency guard on repricing only looks at pending carts:
+     * a settled one no longer depends on the product at all.
+     */
+    public function test_repricing_into_another_currency_leaves_a_paid_cart_readable(): void
+    {
+        $euros = self::product('10.00', 'EUR');
+        $cart = self::cart();
+        $cart->addProduct(ItemId::fromString(Uuid::uuid4()->toString()), $euros, new Quantity(1));
+        $cart->addProduct(ItemId::fromString(Uuid::uuid4()->toString()), self::product('5.00', 'EUR'), new Quantity(2));
+        $cart->pay();
+
+        $euros->setPrice(Price::of('10.00', 'USD'));
+
+        self::assertSame('20.00', $cart->subtotal()?->amount(), 'no currency clash, and the paid figures stand');
+    }
+
     public function test_paying_twice_is_refused(): void
     {
         $cart = self::cart();

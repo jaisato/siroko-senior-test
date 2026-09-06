@@ -38,6 +38,19 @@ class CartItem
     private Quantity $quantity;
 
     /**
+     * The unit price this line settled at, decimal string and ISO code, or
+     * null while the cart is still pending.
+     *
+     * Two plain columns rather than an embedded Price: an embeddable is never
+     * null in Doctrine, and a row with both columns NULL would hydrate a Price
+     * whose typed properties were never initialised - an error on first read,
+     * exactly where a pending line must simply have no captured price.
+     */
+    private ?string $paidAmount = null;
+
+    private ?string $paidCurrency = null;
+
+    /**
      * @throws InvalidQuantityException when the quantity is not one a line accepts
      */
     public function __construct(
@@ -130,11 +143,42 @@ class CartItem
     }
 
     /**
-     * Unit price times units, in the product's currency.
+     * What one unit of this line costs.
+     *
+     * A pending line reads the product, on purpose: the customer sees today's
+     * price. A settled one reads the copy taken when the cart was paid, and
+     * has to - the line points at a product, and a product changes. Repriced
+     * into another currency, a paid cart's subtotal() threw from then on:
+     * reading the cart answered 409 and the queued confirmation rolled back,
+     * for a purchase that was already complete. Repriced within its currency
+     * it was quieter and no better, the total on a paid order moving to
+     * whatever the catalogue says today.
+     */
+    public function unitPrice(): Price
+    {
+        return null !== $this->paidAmount && null !== $this->paidCurrency
+            ? Price::fromPersistence($this->paidAmount, $this->paidCurrency)
+            : $this->product->price();
+    }
+
+    /**
+     * Copies the price this line is settling at. Called by Cart::pay(), the
+     * one moment the amount stops being an offer and becomes what was paid.
+     */
+    public function capturePrice(): void
+    {
+        $price = $this->product->price();
+
+        $this->paidAmount = $price->amount();
+        $this->paidCurrency = $price->currency()->getCurrencyCode();
+    }
+
+    /**
+     * Unit price times units, in the line's currency.
      */
     public function total(): Price
     {
-        return $this->product->price()->multiply($this->quantity->asInt());
+        return $this->unitPrice()->multiply($this->quantity->asInt());
     }
 
     /**

@@ -277,7 +277,7 @@ class Cart
     {
         $first = $this->items->first();
 
-        return $first instanceof CartItem ? $first->getProduct()->price()->currency() : null;
+        return $first instanceof CartItem ? $first->unitPrice()->currency() : null;
     }
 
     /**
@@ -351,6 +351,14 @@ class Cart
 
         if ($this->items->isEmpty()) {
             throw EmptyCartException::cannotBePaid();
+        }
+
+        // The prices stop being an offer here. A line points at a product and a
+        // product changes, so without this copy a paid cart's totals moved
+        // with the catalogue - and a reprice into another currency made
+        // subtotal() throw, which is a 409 on reading a purchase that is done.
+        foreach ($this->items as $item) {
+            $item->capturePrice();
         }
 
         $this->status = CartStatus::paid();

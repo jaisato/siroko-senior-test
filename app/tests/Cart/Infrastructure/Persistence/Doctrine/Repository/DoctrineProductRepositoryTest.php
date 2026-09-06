@@ -162,6 +162,26 @@ final class DoctrineProductRepositoryTest extends KernelTestCase
     }
 
     /** The database enforces what the handler checks, so a lost race cannot create a twin. */
+    /**
+     * ProductCode::equals() compares byte for byte, and the column has to as
+     * well. Under the table's default collation MySQL folded case, so
+     * uniq_product_code refused `abc` next to `ABC` - a valid create answering
+     * 409 - and the by-code lookup could hand back `ABC` for `abc`; SQLite
+     * compared them byte for byte, so the two engines disagreed about the same
+     * data.
+     */
+    public function test_codes_differing_only_in_case_are_different_products(): void
+    {
+        $upper = $this->product(code: 'ABC');
+        $lower = $this->product(code: 'abc');
+
+        self::assertFalse($upper->id()->equals($lower->id()), 'precondition: two products');
+        self::assertTrue($this->repository->existsWithCode(ProductCode::fromString('ABC')));
+        self::assertSame('abc', $this->repository->ofCode(ProductCode::fromString('abc'))?->code()->toString());
+        self::assertSame('ABC', $this->repository->ofCode(ProductCode::fromString('ABC'))?->code()->toString());
+        self::assertNull($this->repository->ofCode(ProductCode::fromString('AbC')));
+    }
+
     public function test_the_code_is_unique_at_the_database_level(): void
     {
         $this->product(code: 'TWIN');
