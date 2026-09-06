@@ -133,12 +133,13 @@ final class IdempotencyGuardTest extends TestCase
     /**
      * Storing the answer is a second write, after the cart's own transaction
      * has committed; a process killed in that gap leaves a claim nobody will
-     * complete. On one shared lifetime that claim answered "in flight" for the
-     * whole retention window - an hour here - in which the client could neither
-     * recover its cart nor retry. A claim only holds a short lease; the long
-     * life is what answering buys.
+     * complete, and nothing about that claim afterwards says whether the work
+     * had been done. Released on a short lease, as this used to do, the retry
+     * ran for real and created a second cart - the one outcome the header
+     * exists to prevent. The key stays held for the retention window and the
+     * retry is refused, which costs a request and cannot cost a duplicate.
      */
-    public function test_a_claim_that_never_answered_expires_on_its_lease_not_on_the_retention_window(): void
+    public function test_a_claim_that_never_answered_is_refused_rather_than_run_again(): void
     {
         $guard = $this->guard(ttlSeconds: 3600);
 
@@ -148,16 +149,57 @@ final class IdempotencyGuardTest extends TestCase
 
         // And one that got all the way through.
         $guard->respond(self::request(key: 'answered'), $this->producer(201, ['id' => 'cart-1']));
+        self::assertSame(2, $this->executions);
 
         $this->clock->modify(\sprintf('+%d seconds', IdempotencyGuard::IN_PROGRESS_LEASE_SECONDS + 1));
 
-        $guard->respond(self::request(key: 'lost'), $this->producer(201));
-        self::assertSame(3, $this->executions, 'the abandoned claim let go, so the retry ran for real');
+        $refused = $guard->respond(self::request(key: 'lost'), $this->producer(201));
+        self::assertSame(Response::HTTP_CONFLICT, $refused->getStatusCode());
+        self::assertStringContainsString('never reported an outcome', (string) $refused->getContent());
+        self::assertSame(2, $this->executions, 'and it is not run a second time');
 
         $replayed = $guard->respond(self::request(key: 'answered'), $this->producer(201, ['id' => 'cart-2']));
         self::assertSame('true', $replayed->headers->get(IdempotencyRecord::REPLAYED_HEADER));
         self::assertStringContainsString('cart-1', (string) $replayed->getContent(), 'an answer keeps the full hour');
-        self::assertSame(3, $this->executions);
+        self::assertSame(2, $this->executions);
+    }
+
+    /**
+     * Inside the lease the original request may genuinely still be running, so
+     * the retry is told to come back rather than that its key is spent.
+     */
+    public function test_a_claim_still_inside_its_lease_is_told_to_retry(): void
+    {
+        $guard = $this->guard(ttlSeconds: 3600);
+
+        $this->store->loseNextCompletion = true;
+        $guard->respond(self::request(key: 'k1'), $this->producer(201));
+
+        $this->clock->modify(\sprintf('+%d seconds', IdempotencyGuard::IN_PROGRESS_LEASE_SECONDS - 1));
+
+        $answer = $guard->respond(self::request(key: 'k1'), $this->producer(201));
+
+        self::assertSame(Response::HTTP_CONFLICT, $answer->getStatusCode());
+        self::assertStringContainsString('still being processed', (string) $answer->getContent());
+        self::assertSame(1, $this->executions);
+    }
+
+    /**
+     * And once the retention window is over the record is gone, key and all:
+     * that window is how long the API promises to remember, and past it the
+     * caller is starting again anyway.
+     */
+    public function test_an_unanswered_claim_stops_holding_the_key_after_the_retention_window(): void
+    {
+        $guard = $this->guard(ttlSeconds: 3600);
+
+        $this->store->loseNextCompletion = true;
+        $guard->respond(self::request(key: 'lost'), $this->producer(201));
+
+        $this->clock->modify('+3601 seconds');
+        $guard->respond(self::request(key: 'lost'), $this->producer(201));
+
+        self::assertSame(2, $this->executions);
     }
 
     /** Two customers may use the same key without ever seeing each other's response. */

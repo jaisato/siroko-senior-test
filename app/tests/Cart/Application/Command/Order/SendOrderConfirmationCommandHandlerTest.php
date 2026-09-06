@@ -63,12 +63,18 @@ final class SendOrderConfirmationCommandHandlerTest extends TestCase
         self::assertSame($order->id()->toString(), $this->logger->records[0]['context']['orderId']);
         self::assertSame('20.00 EUR', $this->logger->records[0]['context']['total']);
 
-        // Decide and commit, send, record the send. The delivery sits between
-        // two transactions rather than inside one: it cannot be rolled back,
-        // and a commit that failed over it told the customer something the row
-        // then denied.
+        // Decide and commit, look once more for a cancellation, send, record
+        // the send. The delivery sits between transactions rather than inside
+        // one: it cannot be rolled back, and a commit that failed over it told
+        // the customer something the row then denied. The middle read takes
+        // the lock and writes nothing - it is the last chance to notice that
+        // the purchase was called off after the decision committed.
         self::assertSame(
-            ['begin', 'lockOrder', 'saveOrder', 'commit', 'begin', 'lockOrder', 'saveOrder', 'commit'],
+            [
+                'begin', 'lockOrder', 'saveOrder', 'commit',
+                'begin', 'lockOrder', 'commit',
+                'begin', 'lockOrder', 'saveOrder', 'commit',
+            ],
             $this->session->log,
         );
     }
@@ -111,6 +117,44 @@ final class SendOrderConfirmationCommandHandlerTest extends TestCase
         self::assertSame(0, $this->saves);
         self::assertStringContainsString('nothing to do', $this->logger->records[0]['message']);
         self::assertTrue($this->logger->records[0]['context']['canceled']);
+    }
+
+    /**
+     * And one that lands *after* the decision committed.
+     *
+     * The first transaction releases the row, and the customer's DELETE only
+     * has to win the microseconds after it: asked once at the top and not
+     * again, the handler told a customer about a purchase the API had already
+     * accepted calling off, and then recorded the cancelled order as
+     * confirmed. The locked read before the send is the last chance to notice.
+     */
+    public function test_a_cancellation_that_lands_after_the_decision_stops_the_send(): void
+    {
+        $order = $this->order();
+        $reads = 0;
+
+        $orders = $this->createStub(OrderRepository::class);
+        $orders->method('ofIdForUpdate')->willReturnCallback(function () use ($order, &$reads): Order {
+            $this->session->log[] = 'lockOrder';
+
+            if (++$reads > 1) {
+                $order->cancel(new \DateTimeImmutable('2026-09-06 10:05:01', new \DateTimeZone('UTC')));
+            }
+
+            return $order;
+        });
+        $orders->method('save')->willReturnCallback(function (): void {
+            ++$this->saves;
+            $this->session->log[] = 'saveOrder';
+        });
+
+        $handler = new SendOrderConfirmationCommandHandler($orders, new MockClock('2026-09-06 10:05:00', 'UTC'), $this->logger, $this->session);
+        $handler(new SendOrderConfirmationCommand($order->id()->toString()));
+
+        self::assertFalse($order->isConfirmationSent(), 'nothing went out, so nothing is recorded as sent');
+        self::assertSame(1, $this->saves, 'only the decision was written');
+        self::assertCount(1, $this->logger->records);
+        self::assertStringContainsString('called off first', $this->logger->records[0]['message']);
     }
 
     /** An unknown order is an error the queue should see (retry, then park), not a silent drop. */
