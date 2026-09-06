@@ -71,6 +71,15 @@ services:
             $apiPrefix: '%api_route_prefix%'
             $debug: '%kernel.debug%'
 
+    # Adds to the generated OpenAPI document what the resource attributes cannot
+    # express: the shared Problem schema, the security schemes, and the 401 every
+    # versioned route answers when API_TOKENS is set.
+    Siroko\Cart\Infrastructure\Api\OpenApi\OpenApiFactoryDecorator:
+        decorates: api_platform.openapi.factory
+        arguments:
+            $decorated: '@.inner'
+            $apiPrefix: '%api_route_prefix%'
+
     # The publisher is a process-wide singleton by design; exposing it as a
     # service lets the middleware receive it instead of reaching for the static
     # accessor, and lets a test hand it a fresh one.
