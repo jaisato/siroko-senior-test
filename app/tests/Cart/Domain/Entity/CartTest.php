@@ -540,6 +540,29 @@ final class CartTest extends TestCase
         $cart->addItem(self::item());
     }
 
+    /**
+     * A cart canceled while still pending never went through pay(), so its
+     * lines kept reading the product - and a canceled cart is still readable,
+     * while the checks that keep a live cart's currencies in step only look at
+     * pending ones. Repricing one product of a canceled two-product EUR cart
+     * into USD therefore made every later GET of it answer 409, on a cart
+     * nobody can act on anyway.
+     */
+    public function test_canceling_a_pending_cart_keeps_the_prices_it_was_canceled_at(): void
+    {
+        $cart = self::cart();
+        $glasses = self::product('129.95');
+        $cart->addItem(new CartItem(ItemId::fromString(Uuid::uuid4()->toString()), $glasses));
+        $cart->addItem(new CartItem(ItemId::fromString(Uuid::uuid4()->toString()), self::product('9.99')));
+
+        $cart->cancel();
+        $glasses->setPrice(Price::of('1.00', 'USD'));
+
+        $subtotal = $cart->subtotal();
+        self::assertNotNull($subtotal);
+        self::assertSame('139.94', $subtotal->amount(), 'the catalogue moved; the record did not');
+    }
+
     private static function cart(): Cart
     {
         return new Cart(CartId::fromString(Uuid::uuid4()->toString()), CartStatus::pending());
