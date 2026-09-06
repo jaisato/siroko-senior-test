@@ -72,6 +72,11 @@ jobs:
       matrix:
         php: ['8.3', '8.4']
     services:
+      # Credentials for a container that lives and dies with this job. They are
+      # spelled out rather than shortened to `root` / `siroko` on purpose: a
+      # bare token next to a key named *_PASSWORD is what a leaked credential
+      # looks like, and secret scanners report it as one. A value that says what
+      # it is cannot be mistaken for a real one.
       mysql:
         image: mysql:8.0
         env:
