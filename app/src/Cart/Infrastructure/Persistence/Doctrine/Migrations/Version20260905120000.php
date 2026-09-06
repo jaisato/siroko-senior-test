@@ -50,10 +50,16 @@ final class Version20260905120000 extends AbstractMigration
         // product. Nor is picking one here: a code identifies a product, and
         // renaming somebody's catalogue behind their back is not a migration.
         // So the offending codes are named and the deploy stops.
+        // MIN(code), not code: `code COLLATE utf8mb4_bin` is a different
+        // expression from `code` as far as MySQL is concerned, so selecting the
+        // bare column beside that GROUP BY is a non-aggregated column under
+        // only_full_group_by and the query is rejected (error 1055). Every row
+        // of a group grouped that way is byte-identical, so the minimum of the
+        // group is the code.
         /** @var list<string> $duplicates */
         $duplicates = $this->connection->fetchFirstColumn(
             \sprintf(
-                'SELECT code FROM product GROUP BY code COLLATE %s HAVING COUNT(*) > 1 ORDER BY code',
+                'SELECT MIN(code) FROM product GROUP BY code COLLATE %s HAVING COUNT(*) > 1 ORDER BY MIN(code)',
                 self::BINARY,
             ),
         );
