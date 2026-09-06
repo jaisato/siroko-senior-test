@@ -40,9 +40,9 @@ final class CartItemRead
             productId: $product->id()->toString(),
             name: $product->name()->toString(),
             code: $product->code()->toString(),
-            price: PriceFormatter::format($product->price()),
+            price: PriceFormatter::format($item->unitPrice()),
             quantity: $item->quantity()->asInt(),
-            unitPrice: $product->price()->jsonSerialize(),
+            unitPrice: $item->unitPrice()->jsonSerialize(),
             lineTotal: $item->total()->jsonSerialize(),
         );
     }

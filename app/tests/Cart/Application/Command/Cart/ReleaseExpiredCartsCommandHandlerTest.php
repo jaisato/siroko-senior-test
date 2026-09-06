@@ -13,6 +13,7 @@ use Siroko\Cart\Domain\Entity\Cart;
 use Siroko\Cart\Domain\Entity\CartItem;
 use Siroko\Cart\Domain\Entity\Product;
 use Siroko\Cart\Domain\Repository\CartRepository;
+use Siroko\Cart\Domain\Repository\OrderRepository;
 use Siroko\Cart\Domain\Repository\ProductRepository;
 use Siroko\Cart\Domain\ValueObject\CartId;
 use Siroko\Cart\Domain\ValueObject\CartStatus;
@@ -191,7 +192,7 @@ final class ReleaseExpiredCartsCommandHandlerTest extends TestCase
 
         return new ReleaseExpiredCartsCommandHandler(
             $carts,
-            new CartCancellation($carts, $products),
+            new CartCancellation($carts, $products, $this->createStub(OrderRepository::class), new MockClock()),
             $this->session,
             new MockClock(self::NOW, 'UTC'),
         );

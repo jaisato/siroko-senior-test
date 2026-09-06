@@ -124,6 +124,19 @@ Con `API_TOKENS` vacía la API es abierta, que es como está pensada la prueba. 
 carrito pasa entonces a tener dueño: `GET /v1/carts` sólo lista los del llamante y operar
 sobre el carrito de otro es un `404`. `/health` y `/api/docs` siguen abiertos.
 
+### Lo que se paga queda fijado
+
+Una línea apunta al producto en vez de guardar una copia de su precio, que es lo correcto
+mientras el carrito está pendiente —el cliente ve el precio de hoy— y deja de serlo en cuanto
+se paga. `Cart::pay()` copia el precio unitario de cada línea, así que el total de un carrito
+pagado ya no se mueve con el catálogo: cambiar el importe de un producto no reescribe una
+compra terminada, y cambiarlo de moneda no vuelve ilegible el carrito que la contiene. El
+`Order` era ya una copia; ahora el carrito también lo es a partir del pago.
+
+Cancelar un carrito pagado alcanza a su pedido: `orders.canceled_at` queda escrito y la
+confirmación encolada en el checkout no hace nada al consumirse, en vez de confirmar una
+compra que el cliente había anulado.
+
 ### Reservas caducadas
 
 El stock se reserva al añadir la línea, así que un carrito abandonado lo retendría para

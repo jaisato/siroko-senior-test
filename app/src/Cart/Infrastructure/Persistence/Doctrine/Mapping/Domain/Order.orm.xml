@@ -45,5 +45,8 @@
         <field name="createdAt" column="created_at" type="datetime_immutable" nullable="false"/>
 
         <field name="confirmedAt" column="confirmed_at" type="datetime_immutable" nullable="true"/>
+
+        <!-- Set when the paid cart behind it was cancelled; a cancelled order is never confirmed. -->
+        <field name="canceledAt" column="canceled_at" type="datetime_immutable" nullable="true"/>
     </entity>
 </doctrine-mapping>

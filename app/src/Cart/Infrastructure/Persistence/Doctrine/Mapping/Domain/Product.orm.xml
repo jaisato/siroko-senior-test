@@ -29,7 +29,20 @@
                type="product_code"
                length="50"
                nullable="false"
-        />
+        >
+            <options>
+                <!-- ProductCode::equals() compares byte for byte; MySQL's
+                     default collation does not, so "ABC" and "abc" collided in
+                     uniq_product_code - a valid second create answered 409 -
+                     and GET /v1/products/by-code/abc could hand back ABC.
+                     SQLite compares them case-sensitively, so the two engines
+                     disagreed as well (Version20260906190000). Declared here
+                     because Doctrine puts the connection's default collation on
+                     the mapping side, so leaving it out makes
+                     doctrine:schema:validate report the column as changed. -->
+                <option name="collation">utf8mb4_bin</option>
+            </options>
+        </field>
 
         <field name="quantity"
                column="quantity"

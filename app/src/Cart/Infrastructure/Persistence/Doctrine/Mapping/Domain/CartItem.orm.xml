@@ -24,6 +24,28 @@
                nullable="false"
         />
 
+        <!--
+            The unit price this line settled at, copied by Cart::pay(). NULL
+            while the cart is pending, when the line reads the product instead.
+            Two plain columns rather than an embedded Price: an embeddable is
+            never null in Doctrine, so a pending row would hydrate a Price whose
+            typed properties were never set.
+        -->
+        <field name="paidAmount"
+               column="paid_price_amount"
+               type="decimal"
+               precision="19"
+               scale="4"
+               nullable="true"
+        />
+
+        <field name="paidCurrency"
+               column="paid_price_currency"
+               type="string"
+               length="3"
+               nullable="true"
+        />
+
         <many-to-one field="cart"
                      target-entity="Siroko\Cart\Domain\Entity\Cart"
                      inversed-by="items"

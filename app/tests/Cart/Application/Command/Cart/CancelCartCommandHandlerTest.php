@@ -11,16 +11,20 @@ use Siroko\Cart\Application\Command\Cart\CancelCartCommandHandler;
 use Siroko\Cart\Application\Service\CartCancellation;
 use Siroko\Cart\Domain\Entity\Cart;
 use Siroko\Cart\Domain\Entity\CartItem;
+use Siroko\Cart\Domain\Entity\Order;
 use Siroko\Cart\Domain\Entity\Product;
 use Siroko\Cart\Domain\Exception\CartNotFoundException;
 use Siroko\Cart\Domain\Exception\InvalidCartStatusException;
 use Siroko\Cart\Domain\Exception\InvalidIdentifierException;
 use Siroko\Cart\Domain\Repository\CartRepository;
+use Siroko\Cart\Domain\Repository\OrderRepository;
+use Symfony\Component\Clock\MockClock;
 use Siroko\Cart\Domain\Repository\ProductRepository;
 use Siroko\Cart\Domain\ValueObject\CartId;
 use Siroko\Cart\Domain\ValueObject\CartStatus;
 use Siroko\Cart\Domain\ValueObject\ItemId;
 use Siroko\Cart\Domain\ValueObject\Name;
+use Siroko\Cart\Domain\ValueObject\OrderId;
 use Siroko\Cart\Domain\ValueObject\Price;
 use Siroko\Cart\Domain\ValueObject\ProductCode;
 use Siroko\Cart\Domain\ValueObject\ProductId;
@@ -67,6 +71,37 @@ final class CancelCartCommandHandlerTest extends TestCase
 
         self::assertSame(CartStatus::CANCELED, $cart->status()->toInt());
         self::assertSame([[$product->id()->toString(), 2]], $this->returned);
+    }
+
+    /**
+     * The order is the record of what was bought, so calling the purchase off
+     * has to reach it. Left standing it was still confirmed by the queued
+     * CartCheckedOut consumer, which only asked whether the confirmation had
+     * gone out, and every read of it showed a purchase the customer had
+     * cancelled.
+     */
+    public function test_canceling_a_paid_cart_calls_its_order_off(): void
+    {
+        $product = $this->product('11111111-1111-4111-8111-111111111111');
+        $cart = $this->cart(CartStatus::PAID, [[$product, 2]]);
+        $order = Order::place(OrderId::fromString(Uuid::uuid4()->toString()), $cart, new \DateTimeImmutable('2026-09-06 10:00:00', new \DateTimeZone('UTC')));
+
+        $this->handler($cart, $order)(new CancelCartCommand($cart->id()->toString()));
+
+        self::assertTrue($order->isCanceled());
+        self::assertSame('2026-09-06 10:05:00', $order->canceledAt()?->format('Y-m-d H:i:s'));
+        self::assertFalse($order->confirm(new \DateTimeImmutable('2026-09-06 11:00:00', new \DateTimeZone('UTC'))), 'the queued confirmation finds nothing to do');
+        self::assertContains('saveOrder', $this->session->log);
+    }
+
+    /** A pending cart has no order behind it, and none is looked for. */
+    public function test_canceling_a_pending_cart_touches_no_order(): void
+    {
+        $cart = $this->cart(CartStatus::PENDING, [[$this->product('11111111-1111-4111-8111-111111111111'), 1]]);
+
+        $this->handler($cart)(new CancelCartCommand($cart->id()->toString()));
+
+        self::assertNotContains('saveOrder', $this->session->log);
     }
 
     /**
@@ -159,7 +194,7 @@ final class CancelCartCommandHandlerTest extends TestCase
         );
     }
 
-    private function handler(?Cart $cart): CancelCartCommandHandler
+    private function handler(?Cart $cart, ?Order $order = null): CancelCartCommandHandler
     {
         $carts = $this->createStub(CartRepository::class);
         $carts->method('ofIdForUpdate')->willReturnCallback(function () use ($cart): ?Cart {
@@ -178,6 +213,16 @@ final class CancelCartCommandHandlerTest extends TestCase
             $this->session->log[] = 'returnStock';
         });
 
-        return new CancelCartCommandHandler($carts, new CartCancellation($carts, $products), $this->session);
+        $orders = $this->createStub(OrderRepository::class);
+        $orders->method('ofCart')->willReturn($order);
+        $orders->method('save')->willReturnCallback(function (): void {
+            $this->session->log[] = 'saveOrder';
+        });
+
+        return new CancelCartCommandHandler(
+            $carts,
+            new CartCancellation($carts, $products, $orders, new MockClock('2026-09-06 10:05:00', new \DateTimeZone('UTC'))),
+            $this->session,
+        );
     }
 }

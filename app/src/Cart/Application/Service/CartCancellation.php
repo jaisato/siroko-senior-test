@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace Siroko\Cart\Application\Service;
 
+use Psr\Clock\ClockInterface;
 use Siroko\Cart\Domain\Entity\Cart;
 use Siroko\Cart\Domain\Entity\CartItem;
 use Siroko\Cart\Domain\Exception\InvalidCartStatusException;
 use Siroko\Cart\Domain\Repository\CartRepository;
+use Siroko\Cart\Domain\Repository\OrderRepository;
 use Siroko\Cart\Domain\Repository\ProductRepository;
 
 /**
@@ -25,6 +27,8 @@ final class CartCancellation
     public function __construct(
         private readonly CartRepository $cartRepository,
         private readonly ProductRepository $productRepository,
+        private readonly OrderRepository $orderRepository,
+        private readonly ClockInterface $clock,
     ) {}
 
     /**
@@ -32,6 +36,10 @@ final class CartCancellation
      */
     public function cancel(Cart $cart): void
     {
+        // Whether the cart was paid decides whether there is an order to call
+        // off, and cancel() is about to change that.
+        $wasPaid = $cart->status()->isPaid();
+
         // The transition is checked before any stock moves.
         $cart->cancel();
 
@@ -40,6 +48,28 @@ final class CartCancellation
         }
 
         $this->cartRepository->save($cart);
+
+        if ($wasPaid) {
+            $this->cancelOrderOf($cart);
+        }
+    }
+
+    /**
+     * The order is the record of what was bought, so calling the purchase off
+     * has to reach it. Left standing, it was still confirmed by the queued
+     * CartCheckedOut consumer - which only asked whether the confirmation had
+     * already been sent - and every read of it showed a purchase the customer
+     * had cancelled.
+     */
+    private function cancelOrderOf(Cart $cart): void
+    {
+        $order = $this->orderRepository->ofCart($cart->id());
+
+        if (null === $order || !$order->cancel($this->clock->now())) {
+            return;
+        }
+
+        $this->orderRepository->save($order);
     }
 
     /**

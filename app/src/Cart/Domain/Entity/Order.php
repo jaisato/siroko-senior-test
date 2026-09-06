@@ -30,6 +30,16 @@ class Order
     private ?\DateTimeImmutable $confirmedAt = null;
 
     /**
+     * When the purchase was called off, if it was.
+     *
+     * A paid cart can be cancelled, and the order is the record of what was
+     * bought: leaving it untouched meant the queued confirmation - which only
+     * asked whether it had already been sent - went out for a purchase that no
+     * longer existed, and every read of the order still showed it as standing.
+     */
+    private ?\DateTimeImmutable $canceledAt = null;
+
+    /**
      * @param list<OrderLine> $lines
      */
     private function __construct(
@@ -136,20 +146,52 @@ class Order
         return null !== $this->confirmedAt;
     }
 
+    public function canceledAt(): ?\DateTimeImmutable
+    {
+        return $this->canceledAt;
+    }
+
+    public function isCanceled(): bool
+    {
+        return null !== $this->canceledAt;
+    }
+
     /**
      * Records that the customer was told about the order. Idempotent: the
      * confirmation is sent by a queue consumer, and a queue redelivers, so a
      * second call keeps the first timestamp and changes nothing.
      *
+     * A cancelled order is never confirmed. The confirmation is queued at
+     * checkout and consumed later, so a cancellation landing in between used
+     * to be overtaken by it: the purchase was called off and the customer
+     * confirmed of it anyway.
+     *
      * @return bool whether this call was the one that confirmed the order
      */
     public function confirm(\DateTimeImmutable $at): bool
     {
-        if (null !== $this->confirmedAt) {
+        if (null !== $this->confirmedAt || null !== $this->canceledAt) {
             return false;
         }
 
         $this->confirmedAt = $at;
+
+        return true;
+    }
+
+    /**
+     * Calls the purchase off. Idempotent, like confirm(), and for the same
+     * reason: cancelling a cart twice must not move the timestamp.
+     *
+     * @return bool whether this call was the one that cancelled the order
+     */
+    public function cancel(\DateTimeImmutable $at): bool
+    {
+        if (null !== $this->canceledAt) {
+            return false;
+        }
+
+        $this->canceledAt = $at;
 
         return true;
     }
