@@ -3,8 +3,13 @@ nelmio_cors:
         origin_regex: true
         allow_origin: ['%env(CORS_ALLOW_ORIGIN)%']
         allow_methods: ['GET', 'OPTIONS', 'POST', 'PUT', 'PATCH', 'DELETE']
-        allow_headers: ['Content-Type', 'Authorization']
-        expose_headers: ['Link']
+        # Every header a client is meant to send. A preflight that names one
+        # outside this list is refused with 400, so a browser could present a
+        # token or an Idempotency-Key only once these were listed.
+        allow_headers: ['Content-Type', 'Authorization', 'X-API-Key', 'Idempotency-Key']
+        # What a browser may read off a response besides the CORS-safelisted
+        # headers: the replay marker of an idempotent retry.
+        expose_headers: ['Link', 'Idempotent-Replayed']
         max_age: 3600
     paths:
         '^/': null
