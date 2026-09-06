@@ -15,14 +15,17 @@ use Siroko\Cart\Infrastructure\Api\Controller\Product\GetProductListController;
 use Siroko\Cart\Infrastructure\Api\Controller\Product\PatchProductController;
 use Siroko\Cart\Infrastructure\Api\Controller\Product\PatchProductStockController;
 use Siroko\Cart\Infrastructure\Api\Controller\Product\PostProductController;
+use Siroko\Cart\Infrastructure\Api\OpenApi\Problem;
 use Symfony\Component\Routing\Requirement\Requirement;
 
 /**
  * Routing and OpenAPI metadata of the product endpoints; see CartResource for
- * why the controllers carry no routes of their own.
+ * why the controllers carry no routes of their own and how the error
+ * responses are declared.
  */
 #[API\ApiResource(
     shortName: 'Product',
+    description: 'The catalogue: create, edit, restock and withdraw products; list them with filters, or look one up by id or by code.',
     operations: [
         new API\Get(
             name: 'api_get_product_by_id',
@@ -31,6 +34,7 @@ use Symfony\Component\Routing\Requirement\Requirement;
             controller: GetProductByIdController::class,
             read: false,
             output: ProductRead::class,
+            errors: [],
             openapi: new Model\Operation(
                 summary: 'Get product by id',
                 parameters: [
@@ -42,6 +46,9 @@ use Symfony\Component\Routing\Requirement\Requirement;
                         schema: ['type' => 'string', 'format' => 'uuid'],
                     ),
                 ],
+                responses: [
+                    404 => new Model\Response('No product has this id, or it has been withdrawn.', new \ArrayObject(Problem::CONTENT)),
+                ],
             ),
         ),
         new API\Get(
@@ -51,6 +58,7 @@ use Symfony\Component\Routing\Requirement\Requirement;
             controller: GetProductByCodeController::class,
             read: false,
             output: ProductRead::class,
+            errors: [],
             openapi: new Model\Operation(
                 summary: 'Get product by code',
                 parameters: [
@@ -62,6 +70,10 @@ use Symfony\Component\Routing\Requirement\Requirement;
                         schema: ['type' => 'string', 'minLength' => 1, 'maxLength' => 50],
                     ),
                 ],
+                responses: [
+                    400 => new Model\Response('The code is not one a product can have (for instance, only whitespace).', new \ArrayObject(Problem::CONTENT)),
+                    404 => new Model\Response('No product has this code, or it has been withdrawn.', new \ArrayObject(Problem::CONTENT)),
+                ],
             ),
         ),
         new API\GetCollection(
@@ -71,6 +83,7 @@ use Symfony\Component\Routing\Requirement\Requirement;
             read: false,
             output: ProductReadCollection::class,
             paginationEnabled: false,
+            errors: [],
             openapi: new Model\Operation(
                 summary: 'List products',
                 description: 'One page of the catalogue with pagination metadata (page, pageSize, total, pages). Withdrawn products are not listed. Filters combine with AND; prices are compared by amount.',
@@ -82,6 +95,9 @@ use Symfony\Component\Routing\Requirement\Requirement;
                     new Model\Parameter(name: 'maxPrice', in: 'query', description: 'Inclusive upper bound of the amount', schema: ['type' => 'string', 'example' => '99.99']),
                     new Model\Parameter(name: 'inStock', in: 'query', description: 'true: units available; false: none', schema: ['type' => 'boolean']),
                     new Model\Parameter(name: 'sort', in: 'query', description: 'Field to order by; a leading "-" sorts descending', schema: ['type' => 'string', 'enum' => ['name', '-name', 'price', '-price', 'code', '-code'], 'default' => 'name']),
+                ],
+                responses: [
+                    400 => new Model\Response('A filter has an unusable value: a page parameter that is not an integer, a price that is not an amount or a range with minPrice above maxPrice, an inStock that is not a boolean, or an unknown sort field.', new \ArrayObject(Problem::CONTENT)),
                 ],
             ),
         ),
@@ -95,6 +111,7 @@ use Symfony\Component\Routing\Requirement\Requirement;
             deserialize: false,
             input: false,
             output: ProductRead::class,
+            errors: [],
             openapi: new Model\Operation(
                 summary: 'Update a product',
                 description: 'Changes any of name, code and price. Stock has its own endpoint. A code already in use answers 409.',
@@ -132,6 +149,11 @@ use Symfony\Component\Routing\Requirement\Requirement;
                         ],
                     ]),
                 ),
+                responses: [
+                    400 => new Model\Response('The body is not a JSON object, names none of the properties, or a value is not one the domain accepts (name or code length, price amount or currency).', new \ArrayObject(Problem::CONTENT)),
+                    404 => new Model\Response('No product has this id, or it has been withdrawn.', new \ArrayObject(Problem::CONTENT)),
+                    409 => new Model\Response('Another product already has the requested code.', new \ArrayObject(Problem::CONTENT)),
+                ],
             ),
         ),
         new API\Patch(
@@ -144,6 +166,7 @@ use Symfony\Component\Routing\Requirement\Requirement;
             deserialize: false,
             input: false,
             output: ProductRead::class,
+            errors: [],
             openapi: new Model\Operation(
                 summary: 'Adjust the available stock of a product',
                 description: 'Exactly one of `quantity` (sets the available units) or `delta` (adds units; negative removes them). The available count never goes below zero: a delta that would answers 409.',
@@ -174,6 +197,11 @@ use Symfony\Component\Routing\Requirement\Requirement;
                         ],
                     ]),
                 ),
+                responses: [
+                    400 => new Model\Response('The body is not a JSON object, names neither or both of quantity and delta, or a value is not an integer in range (a delta may not be 0).', new \ArrayObject(Problem::CONTENT)),
+                    404 => new Model\Response('No product has this id, or it has been withdrawn.', new \ArrayObject(Problem::CONTENT)),
+                    409 => new Model\Response('A negative delta would take the available units below zero.', new \ArrayObject(Problem::CONTENT)),
+                ],
             ),
         ),
         new API\Delete(
@@ -185,6 +213,7 @@ use Symfony\Component\Routing\Requirement\Requirement;
             write: false,
             output: false,
             status: 204,
+            errors: [],
             openapi: new Model\Operation(
                 summary: 'Withdraw a product from the catalogue',
                 description: 'Soft delete: the product stops being listed and found, carts can no longer add it, but existing cart lines and orders keep referencing it. Its code stays taken.',
@@ -197,6 +226,9 @@ use Symfony\Component\Routing\Requirement\Requirement;
                         schema: ['type' => 'string', 'format' => 'uuid'],
                     ),
                 ],
+                responses: [
+                    404 => new Model\Response('No product has this id, or it has already been withdrawn.', new \ArrayObject(Problem::CONTENT)),
+                ],
             ),
         ),
         new API\Post(
@@ -205,6 +237,7 @@ use Symfony\Component\Routing\Requirement\Requirement;
             controller: PostProductController::class,
             read: false,
             output: ProductRead::class,
+            errors: [],
             openapi: new Model\Operation(
                 summary: 'Create product',
                 requestBody: new Model\RequestBody(
@@ -226,6 +259,10 @@ use Symfony\Component\Routing\Requirement\Requirement;
                         ],
                     ]),
                 ),
+                responses: [
+                    400 => new Model\Response('The body is not a JSON object, a field is missing or has the wrong type, or a value is not one the domain accepts (name or code length, price amount or currency, negative quantity).', new \ArrayObject(Problem::CONTENT)),
+                    409 => new Model\Response('Another product already has this code.', new \ArrayObject(Problem::CONTENT)),
+                ],
             ),
         ),
     ],
