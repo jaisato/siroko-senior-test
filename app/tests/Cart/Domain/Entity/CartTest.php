@@ -563,6 +563,48 @@ final class CartTest extends TestCase
         self::assertSame('139.94', $subtotal->amount(), 'the catalogue moved; the record did not');
     }
 
+    /**
+     * A paid cart has already settled, so canceling it must not settle it
+     * again: re-reading the product there replaced the price it was paid at
+     * with whatever the catalogue said by then, leaving the canceled cart
+     * reporting a total its own order does not.
+     */
+    public function test_canceling_a_paid_cart_keeps_the_prices_it_was_paid_at(): void
+    {
+        $cart = self::cart();
+        $glasses = self::product('129.95');
+        $cart->addItem(new CartItem(ItemId::fromString(Uuid::uuid4()->toString()), $glasses));
+
+        $cart->pay();
+        $glasses->setPrice(Price::of('99.95', 'EUR'));
+        $cart->cancel();
+
+        $subtotal = $cart->subtotal();
+        self::assertNotNull($subtotal);
+        self::assertSame('129.95', $subtotal->amount());
+    }
+
+    /**
+     * The same, in the shape that does not merely misreport: with one line of
+     * a two-line EUR cart repriced into USD, a second capture would leave the
+     * cart holding two currencies and every later read of it throwing.
+     */
+    public function test_canceling_a_paid_cart_survives_a_reprice_into_another_currency(): void
+    {
+        $cart = self::cart();
+        $glasses = self::product('129.95');
+        $cart->addItem(new CartItem(ItemId::fromString(Uuid::uuid4()->toString()), $glasses));
+        $cart->addItem(new CartItem(ItemId::fromString(Uuid::uuid4()->toString()), self::product('9.99')));
+
+        $cart->pay();
+        $glasses->setPrice(Price::of('1.00', 'USD'));
+        $cart->cancel();
+
+        $subtotal = $cart->subtotal();
+        self::assertNotNull($subtotal);
+        self::assertSame('139.94', $subtotal->amount());
+    }
+
     private static function cart(): Cart
     {
         return new Cart(CartId::fromString(Uuid::uuid4()->toString()), CartStatus::pending());
