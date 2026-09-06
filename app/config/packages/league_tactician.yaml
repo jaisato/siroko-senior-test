@@ -17,5 +17,17 @@ tactician:
         cli:
             middleware:
                 - tactician.middleware.locking
-                - tactician.middleware.doctrine
+                # `doctrine_rollback_only`, like the write bus, and for a
+                # sharper reason here: `tactician.middleware.doctrine` opens a
+                # transaction around the whole handler, so the handler's own
+                # `executeAtomically()` calls only nest inside it and nothing
+                # they write is committed until the handler returns. The one
+                # command on this bus is the order confirmation, whose whole
+                # design is "commit the decision, then send, then record the
+                # send" - under an outer transaction the notification went out
+                # before anything was durable, exactly the failure the split
+                # was made to close. A handler that wants atomicity asks for it
+                # through TransactionalSession; this middleware only marks an
+                # open transaction for rollback when a handler throws.
+                - tactician.middleware.doctrine_rollback_only
                 - tactician.middleware.command_handler
