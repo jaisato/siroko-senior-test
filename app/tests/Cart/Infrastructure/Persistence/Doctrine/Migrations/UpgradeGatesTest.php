@@ -15,17 +15,19 @@ use Siroko\Cart\Domain\Entity\CartItem;
 use Siroko\Cart\Domain\ValueObject\CartStatus;
 use Siroko\Cart\Infrastructure\Persistence\Doctrine\Migrations\Version20260905120000;
 use Siroko\Cart\Infrastructure\Persistence\Doctrine\Migrations\Version20260906100000;
+use Siroko\Cart\Infrastructure\Persistence\Doctrine\Migrations\Version20260906180000;
 use Siroko\Cart\Infrastructure\Persistence\Doctrine\Migrations\Version20260906190000;
 
 /**
- * Three migrations refuse to run against data the new rules cannot hold, and
+ * Four migrations refuse to run against data the new rules cannot hold, and
  * what exactly they refuse is the whole point: a gate that stops a deploy over
  * rows that are in fact fine is as bad as no gate at all.
  *
  * They are MySQL DDL, so the suite cannot execute them (the SQLite profile
  * builds its schema from the mappings). What it can do is drive them with the
  * connection they read through and check the questions they ask and the order
- * they queue their statements in - which is where all three defects were.
+ * they queue their statements in - which is where every defect in them was.
+ * UpgradeGatesRunOnMysqlTest runs the queries themselves against the engine.
  */
 final class UpgradeGatesTest extends TestCase
 {
@@ -222,6 +224,39 @@ final class UpgradeGatesTest extends TestCase
         foreach ($asked as $question) {
             self::assertStringContainsString('BIN_TO_UUID(i.cart_id)', $question['sql']);
         }
+    }
+
+    /**
+     * A cart is priced in one currency - addItem() and the checkout refuse a
+     * product in another, and subtotal() adds the lines without asking - so a
+     * legacy row in two adds up to nothing: an exception on every read of the
+     * cart, and no checkout for it while it is pending. The gate runs before
+     * the backfill, which would otherwise freeze both currencies into the
+     * line's own columns.
+     */
+    public function test_a_legacy_cart_in_two_currencies_stops_the_backfill(): void
+    {
+        $asked = [];
+        $migration = new Version20260906180000($this->connection($asked, [['0b6d… (EUR/USD)']]), new NullLogger());
+
+        $this->expectException(AbortMigration::class);
+        $this->expectExceptionMessage('EUR/USD');
+
+        $migration->preUp(new Schema());
+    }
+
+    public function test_the_currency_gate_looks_at_every_cart_whatever_its_status(): void
+    {
+        $asked = [];
+        $migration = new Version20260906180000($this->connection($asked, [[]]), new NullLogger());
+
+        $migration->preUp(new Schema());
+
+        self::assertCount(1, $asked);
+        self::assertStringContainsString('COUNT(DISTINCT p.price_currency) > 1', $asked[0]['sql']);
+        // A settled cart is as unreadable as a pending one once its lines
+        // disagree, and the backfill is what makes that permanent.
+        self::assertStringNotContainsString('c.status', $asked[0]['sql']);
     }
 
     /**
