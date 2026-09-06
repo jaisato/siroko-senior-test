@@ -40,12 +40,12 @@ final class UpgradeGatesTest extends TestCase
     public function test_the_code_column_is_made_case_sensitive_before_the_unique_index(): void
     {
         $asked = [];
-        $migration = new Version20260905120000($this->connection($asked, [[]]), new NullLogger());
+        $migration = new Version20260905120000($this->connection($asked, [[], []]), new NullLogger());
 
         $migration->preUp(new Schema());
         $migration->up(new Schema());
 
-        self::assertCount(1, $asked);
+        self::assertCount(2, $asked, 'one code per product, and a code the API can be asked for');
         self::assertStringContainsString('COLLATE utf8mb4_bin', $asked[0]['sql'], 'the duplicate check compares the way the domain does');
 
         $statements = $this->statements($migration);
@@ -66,37 +66,98 @@ final class UpgradeGatesTest extends TestCase
     }
 
     /**
-     * A withdrawn product cannot be added to a cart, so its price can no longer
-     * overflow an order total. Selecting it stopped the deploy for good: the
-     * message asks the operator to reprice or withdraw it, and it was already
-     * withdrawn.
-     *
-     * With one exception, which is the second half of the question the gate
-     * asks: withdrawing does not reach into carts. Units a pending cart already
-     * holds stay its own until they are released or paid, and checkout does not
-     * re-ask the catalogue, so a withdrawn product sitting in a pending cart
-     * still overflows the order total.
+     * A code identifies a product only if the API can be asked for it, and
+     * `GET /v1/products/by-code/{code}` reads a slash as another path segment.
+     * ProductCode refuses one for that reason, but hydration does not re-apply
+     * the rule, so a row written before it existed keeps a code the lookup this
+     * series introduces cannot reach.
      */
-    public function test_the_price_ceiling_gate_looks_at_what_can_still_reach_a_checkout(): void
+    public function test_a_legacy_code_the_by_code_lookup_cannot_address_stops_the_upgrade(): void
     {
         $asked = [];
-        $migration = new Version20260906190000($this->connection($asked, [[]]), new NullLogger());
+        // Nothing duplicated; the second question is the one that answers.
+        $migration = new Version20260905120000($this->connection($asked, [[], ['ABC/123']]), new NullLogger());
+
+        $this->expectException(AbortMigration::class);
+        $this->expectExceptionMessage('ABC/123');
+
+        $migration->preUp(new Schema());
+    }
+
+    public function test_the_addressability_check_looks_for_slashes_and_control_characters(): void
+    {
+        $asked = [];
+        $migration = new Version20260905120000($this->connection($asked, [[], []]), new NullLogger());
 
         $migration->preUp(new Schema());
 
-        self::assertCount(1, $asked);
+        self::assertStringContainsString("REGEXP '[/[:cntrl:]]'", $asked[1]['sql']);
+    }
+
+    /**
+     * Two different questions, and the difference is what a cart can still
+     * become. The unit ceiling is about the future: a product on sale can be
+     * added up to MAX_LINES lines of MAX_QUANTITY units, so its price has to be
+     * one a full cart of it survives. A withdrawn product has no future -
+     * reserveStock refuses one, so no add and no quantity change puts another
+     * unit in a cart - and it is judged on the arithmetic instead: what the
+     * carts holding it already total.
+     */
+    public function test_the_price_ceiling_looks_only_at_products_still_on_sale(): void
+    {
+        $asked = [];
+        $migration = new Version20260906190000($this->connection($asked, [[], []]), new NullLogger());
+
+        $migration->preUp(new Schema());
+
+        self::assertCount(2, $asked, 'the unit ceiling, and the totals of the carts that are already out there');
         self::assertStringContainsString('deleted_at IS NULL', $asked[0]['sql']);
-        self::assertStringContainsString('cart_item', $asked[0]['sql'], 'a withdrawn product a pending cart holds is still chargeable');
-        self::assertSame(CartStatus::PENDING, $asked[0]['params']['pending']);
+        self::assertStringNotContainsString('cart_item', $asked[0]['sql'], 'what a cart holds today is the other question');
     }
 
     public function test_a_product_on_sale_above_the_price_ceiling_stops_the_upgrade(): void
     {
         $asked = [];
-        $migration = new Version20260906190000($this->connection($asked, [['B1']]), new NullLogger());
+        $migration = new Version20260906190000($this->connection($asked, [['B1'], []]), new NullLogger());
 
         $this->expectException(AbortMigration::class);
         $this->expectExceptionMessage('B1');
+
+        $migration->preUp(new Schema());
+    }
+
+    /**
+     * The second gate is the arithmetic, not the presence of an overpriced
+     * product: a withdrawn one held as a single unit at a price the column fits
+     * is not an overflow, and no unit can be added to it, so a deploy stopped
+     * over that cart is stopped over nothing.
+     */
+    public function test_the_second_gate_asks_what_the_pending_carts_already_total(): void
+    {
+        $asked = [];
+        $migration = new Version20260906190000($this->connection($asked, [[], []]), new NullLogger());
+
+        $migration->preUp(new Schema());
+
+        $totals = $asked[1];
+        self::assertStringContainsString('SUM(p.price_amount * i.quantity)', $totals['sql']);
+        self::assertStringContainsString('GROUP BY i.cart_id, p.price_currency', $totals['sql'], 'an order carries one total in one currency');
+        self::assertSame(CartStatus::PENDING, $totals['params']['pending']);
+        // Fifteen integral digits: NUMERIC(19, 4), the column itself rather
+        // than the unit ceiling derived from it.
+        self::assertSame('999999999999999.9999', $totals['params']['maximum']);
+    }
+
+    public function test_a_pending_cart_whose_total_the_column_cannot_hold_stops_the_upgrade(): void
+    {
+        $asked = [];
+        $migration = new Version20260906190000(
+            $this->connection($asked, [[], ['0b6d… (1000000000000000.0000 EUR)']]),
+            new NullLogger(),
+        );
+
+        $this->expectException(AbortMigration::class);
+        $this->expectExceptionMessage('1000000000000000.0000 EUR');
 
         $migration->preUp(new Schema());
     }
