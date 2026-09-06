@@ -145,6 +145,14 @@ final class DoctrineProductRepository implements ProductRepository
     /**
      * A recount: the column is replaced, in one statement, for a product that
      * is still in the catalogue.
+     *
+     * Unlike reserveStock(), the new figure may be the one the column already
+     * holds - a recount that confirms the count is the most ordinary recount
+     * there is. MySQL reports *changed* rows, not matched ones, so that
+     * statement affects nothing, and reading zero as "no such product"
+     * answered 404 for a product sitting right there. SQLite counts the rows
+     * the statement touched, so the local suite never saw it. Asking whether
+     * the row is in the catalogue settles it the same way on both.
      */
     public function setStock(ProductId $id, Quantity $quantity): bool
     {
@@ -154,13 +162,26 @@ final class DoctrineProductRepository implements ProductRepository
             ['quantity' => ParameterType::INTEGER, 'id' => ProductIdType::NAME],
         );
 
-        if (1 !== $affected) {
+        if (1 !== $affected && !$this->isInCatalogue($id)) {
             return false;
         }
 
         $this->refreshIfManaged($id);
 
         return true;
+    }
+
+    /**
+     * Whether the product is there and has not been withdrawn - the question
+     * a zero-row UPDATE leaves unanswered.
+     */
+    private function isInCatalogue(ProductId $id): bool
+    {
+        return false !== $this->em->getConnection()->fetchOne(
+            'SELECT 1 FROM product WHERE id = :id AND deleted_at IS NULL',
+            ['id' => $id],
+            ['id' => ProductIdType::NAME],
+        );
     }
 
     /**

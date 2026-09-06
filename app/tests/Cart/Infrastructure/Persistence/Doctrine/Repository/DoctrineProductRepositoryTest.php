@@ -247,6 +247,44 @@ final class DoctrineProductRepositoryTest extends KernelTestCase
         self::assertFalse($this->repository->setStock(ProductId::fromString(Uuid::uuid4()->toString()), new Quantity(1)));
     }
 
+    /**
+     * Confirming a count that has not moved is the most ordinary recount there
+     * is, and on MySQL it changes no row - which setStock() read as "no such
+     * product" and the API answered 404. SQLite counts matched rows, so only
+     * the MySQL run of this can fail; ProductStockRecountTest pins the branch
+     * itself, over a doubled connection, on any engine.
+     */
+    public function test_set_stock_to_the_figure_already_stored_is_still_a_recount(): void
+    {
+        $product = $this->product(stock: 7);
+
+        self::assertTrue($this->repository->setStock($product->id(), new Quantity(7)));
+
+        self::assertSame(7, $this->stockInDatabase($product));
+    }
+
+    /**
+     * The text filter matches the name *or* the code, and that alternative has
+     * to stay one predicate: read as `name LIKE … OR (code LIKE … AND price >=
+     * … AND quantity > 0)` it would return every product whose name matches,
+     * ignoring the other filters entirely. Doctrine parenthesises a part
+     * holding " OR " when it composes the WHERE (DDC-1237), so the query is
+     * right - this pins it, because nothing else here would notice if a
+     * refactor moved the alternative somewhere that does not.
+     */
+    public function test_the_text_filter_is_one_predicate_next_to_the_other_filters(): void
+    {
+        $this->product('Gafas de sol', 'K3', '129.95', 5);
+        $this->product('Casco', 'GAFAS-X', '10.00', 0);
+
+        $found = $this->repository->search(ProductCriteria::of(text: 'gafas', inStock: true), 1, 10);
+
+        self::assertSame(['Gafas de sol'], array_map(
+            static fn(Product $p): string => $p->name()->toString(),
+            $found,
+        ), 'the out-of-stock product whose code matches is filtered out too');
+    }
+
     public function test_search_filters_by_text_price_and_stock_and_sorts(): void
     {
         $this->product('Gafas de sol', 'K3', '129.95', 3);
