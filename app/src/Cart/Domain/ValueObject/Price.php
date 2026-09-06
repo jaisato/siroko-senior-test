@@ -76,6 +76,42 @@ final class Price implements \Stringable, \JsonSerializable
     }
 
     /**
+     * Rebuilds a price this application wrote, without re-applying the ceiling
+     * that only ever governed a *unit* price.
+     *
+     * MAX_AMOUNT is chosen so that a full cart of that unit price still fits
+     * the money columns, which is why add(), subtract() and multiply() do not
+     * re-check it: the amounts they derive - a line total, an order total -
+     * are legitimately larger, up to CartItem::MAX_QUANTITY times as large.
+     * An order line stored one of those and then read it back through of(),
+     * so a paid order whose line total passed the unit ceiling was written at
+     * checkout and threw on every read afterwards: GET /v1/orders/{id}
+     * answered 500 for an order that is entirely correct.
+     *
+     * A negative or malformed amount is still refused. That is a corrupt row,
+     * not a large one, and hiding it would put a nonsense figure in front of
+     * the customer instead of an error in the log.
+     *
+     * @throws InvalidPriceException
+     */
+    public static function fromPersistence(string $amount, string|Currency $currency): self
+    {
+        try {
+            $money = BrickMoney::of($amount, self::currencyOf($currency), roundingMode: RoundingMode::Unnecessary);
+        } catch (RoundingNecessaryException) {
+            throw InvalidPriceException::tooManyDecimals();
+        } catch (NumberFormatException|MathException) {
+            throw InvalidPriceException::malformedAmount();
+        }
+
+        if ($money->isNegative()) {
+            throw InvalidPriceException::negative();
+        }
+
+        return new self($money);
+    }
+
+    /**
      * @throws InvalidPriceException
      */
     public static function ofMinor(int|string $minor, string|Currency $currency): self

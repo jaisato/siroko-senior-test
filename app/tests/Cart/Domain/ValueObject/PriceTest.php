@@ -94,6 +94,39 @@ final class PriceTest extends TestCase
         Price::of('100000000000.00', 'EUR');
     }
 
+    /**
+     * That ceiling governs a unit price. The amounts derived from one - a line
+     * total, an order total - are legitimately up to a hundred times larger,
+     * which is why multiply() does not re-check it. Reading one back had to
+     * stop doing so as well: an order line of 100 units at two thousand
+     * million was written at checkout and then threw on every read of the
+     * order, so GET /v1/orders/{id} answered 500 for an order that is correct.
+     */
+    public function test_a_stored_amount_above_the_unit_ceiling_is_read_back(): void
+    {
+        $total = Price::of('2000000000.00', 'EUR')->multiply(100);
+        self::assertSame('200000000000.00', $total->amount(), 'precondition: past the unit ceiling');
+
+        $rebuilt = Price::fromPersistence($total->amount(), 'EUR');
+
+        self::assertTrue($rebuilt->equals($total));
+    }
+
+    /** A corrupt row is still a corrupt row: only the ceiling is lifted. */
+    public function test_a_stored_amount_that_is_negative_or_malformed_is_still_rejected(): void
+    {
+        try {
+            Price::fromPersistence('-0.01', 'EUR');
+            self::fail('a negative stored amount must be refused');
+        } catch (InvalidPriceException $e) {
+            self::assertStringContainsString('negative', $e->getMessage());
+        }
+
+        $this->expectException(InvalidPriceException::class);
+
+        Price::fromPersistence('not a number', 'EUR');
+    }
+
     public function test_a_negative_amount_is_rejected(): void
     {
         $this->expectException(InvalidPriceException::class);

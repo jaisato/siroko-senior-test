@@ -55,6 +55,11 @@ final class OrderLine
      * Rebuilds a line from its stored form. The amounts were valid prices when
      * they were written, so a failure here is a corrupt row, not bad input.
      *
+     * Which is why they come back through Price::fromPersistence(): of()
+     * enforces the ceiling on a *unit* price, and a line total is that price
+     * times up to CartItem::MAX_QUANTITY units. A line dear enough to pass it
+     * was written at checkout and then threw on every read of the order.
+     *
      * @param OrderLineArray $data
      *
      * @throws InvalidPriceException
@@ -68,8 +73,8 @@ final class OrderLine
             $data['code'],
             $data['name'],
             $quantity,
-            Price::of($data['unitPrice']['amount'], $data['unitPrice']['currency']),
-            Price::of($data['lineTotal']['amount'], $data['lineTotal']['currency']),
+            Price::fromPersistence($data['unitPrice']['amount'], $data['unitPrice']['currency']),
+            Price::fromPersistence($data['lineTotal']['amount'], $data['lineTotal']['currency']),
         );
     }
 

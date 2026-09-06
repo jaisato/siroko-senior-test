@@ -119,6 +119,26 @@ final class OrderTest extends TestCase
         self::assertTrue($order->isConfirmed());
     }
 
+    /**
+     * The dearest line a cart can hold is a unit price at its ceiling times a
+     * hundred units, so a line total is legitimately far above that ceiling.
+     * Rebuilding it through Price::of() applied the unit rule to the total and
+     * threw, which made a paid order unreadable: it was written at checkout
+     * and answered 500 on every GET afterwards, with nothing wrong with it.
+     */
+    public function test_a_line_dearer_than_the_unit_ceiling_round_trips(): void
+    {
+        $cart = self::paidCart([['Bici', 'B1', '2000000000.00', 100]]);
+        $item = $cart->items()->first();
+        self::assertInstanceOf(CartItem::class, $item);
+        $line = OrderLine::fromCartItem($item);
+        self::assertSame('200000000000.00', $line->lineTotal()->amount(), 'precondition: past the unit ceiling');
+
+        $rebuilt = OrderLine::fromArray($line->toArray());
+
+        self::assertSame($line->toArray(), $rebuilt->toArray());
+    }
+
     public function test_a_line_round_trips_through_its_array_form(): void
     {
         $cart = self::paidCart([['Gafas', 'K3', '129.95', 2]]);
