@@ -137,6 +137,20 @@ final class PostCartControllerTest extends ApiTestCase
         $this->assertProblem(400, '"products" is required');
     }
 
+    /**
+     * The operation declares `minItems: 1` and a 400, and only the upper bound
+     * was checked: an empty list created an empty cart and answered 201, for a
+     * cart the checkout then refuses as empty. A client generated from the
+     * document sends what the document allows and gets an answer it does not
+     * describe.
+     */
+    public function test_an_empty_product_list_is_a_400_problem(): void
+    {
+        $this->request('POST', $this->url('api_create_cart'), ['products' => []]);
+
+        $this->assertProblem(400, 'at least one line');
+    }
+
     public function test_products_must_be_a_list(): void
     {
         $this->request('POST', $this->url('api_create_cart'), [

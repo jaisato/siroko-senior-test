@@ -48,5 +48,10 @@
 
         <!-- Set when the paid cart behind it was cancelled; a cancelled order is never confirmed. -->
         <field name="canceledAt" column="canceled_at" type="datetime_immutable" nullable="true"/>
+
+        <!-- Set once the confirmation has actually been delivered, which is a
+             different fact from having decided to confirm: the delivery cannot
+             be part of the transaction that writes confirmed_at. -->
+        <field name="confirmationSentAt" column="confirmation_sent_at" type="datetime_immutable" nullable="true"/>
     </entity>
 </doctrine-mapping>

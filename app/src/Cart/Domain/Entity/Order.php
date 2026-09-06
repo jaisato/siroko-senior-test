@@ -39,6 +39,9 @@ class Order
      */
     private ?\DateTimeImmutable $canceledAt = null;
 
+    /** When the confirmation actually went out; see markConfirmationSent(). */
+    private ?\DateTimeImmutable $confirmationSentAt = null;
+
     /**
      * @param list<OrderLine> $lines
      */
@@ -194,5 +197,46 @@ class Order
         $this->canceledAt = $at;
 
         return true;
+    }
+
+    /**
+     * Records that the confirmation actually went out, which is not the same
+     * fact as `confirmedAt` and is why it is a second timestamp.
+     *
+     * `confirmedAt` is the decision, taken inside the transaction that owns the
+     * row. The delivery happens outside it - it is a call to somewhere else,
+     * and nothing about it can be rolled back - so it cannot be part of that
+     * commit. Emitted inside it, as this used to be, a commit that failed
+     * afterwards rolled the decision back while the customer had already been
+     * told, and the retry told them a second time; the row then said the
+     * confirmation had never been sent.
+     *
+     * With the two apart the order of events is: decide and commit, send, then
+     * record the send. A redelivery reads both marks and knows which step is
+     * still owed. The one window left is the queue's own - a crash between the
+     * send and the ack - which no application can close.
+     *
+     * @return bool whether this call was the one that recorded it
+     */
+    public function markConfirmationSent(\DateTimeImmutable $at): bool
+    {
+        if (null !== $this->confirmationSentAt) {
+            return false;
+        }
+
+        $this->confirmationSentAt = $at;
+
+        return true;
+    }
+
+    public function confirmationSentAt(): ?\DateTimeImmutable
+    {
+        return $this->confirmationSentAt;
+    }
+
+    /** Whether the customer has already been told; see markConfirmationSent(). */
+    public function isConfirmationSent(): bool
+    {
+        return null !== $this->confirmationSentAt;
     }
 }
