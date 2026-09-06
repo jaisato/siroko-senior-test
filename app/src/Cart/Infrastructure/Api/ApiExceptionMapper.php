@@ -25,6 +25,7 @@ use Siroko\Cart\Domain\Exception\NameInvalidLengthException;
 use Siroko\Cart\Domain\Exception\OrderNotFoundException;
 use Siroko\Cart\Domain\Exception\OutOfStockException;
 use Siroko\Cart\Domain\Exception\PriceIsNotSameCurrencyException;
+use Siroko\Cart\Domain\Exception\ProductIsInAPendingCartException;
 use Siroko\Cart\Domain\Exception\ProductNotFoundException;
 use Symfony\Component\HttpFoundation\Exception\RequestExceptionInterface;
 use Symfony\Component\HttpFoundation\JsonResponse;
@@ -84,6 +85,8 @@ final class ApiExceptionMapper
         // Same reasoning: the payload is fine, the cart is what will not take
         // it, and what resolves it is a line removed or a checkout.
         CartIsFullException::class => Response::HTTP_CONFLICT,
+        // Also the cart's state, seen from the product side.
+        ProductIsInAPendingCartException::class => Response::HTTP_CONFLICT,
         InvalidCartLineException::class => Response::HTTP_BAD_REQUEST,
         InvalidCustomerIdException::class => Response::HTTP_BAD_REQUEST,
         InvalidProductCriteriaException::class => Response::HTTP_BAD_REQUEST,

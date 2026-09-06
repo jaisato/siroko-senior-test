@@ -97,6 +97,29 @@ final class ProductCriteriaTest extends TestCase
         ProductCriteria::of(minPrice: '10.01', maxPrice: '10');
     }
 
+    /**
+     * The bounds admit fifteen integral digits and four decimal ones, which is
+     * more precision than a double carries: cast to float these two came out
+     * equal, the inverted range went unreported, and the repository then
+     * applied two contradictory predicates and answered an empty page as
+     * though that were the truth about the catalogue.
+     */
+    public function test_an_inversion_a_float_cannot_see_is_refused_too(): void
+    {
+        $this->expectException(InvalidProductCriteriaException::class);
+        $this->expectExceptionMessage('cannot be greater');
+
+        ProductCriteria::of(minPrice: '999999999999999.9999', maxPrice: '999999999999999.9998');
+    }
+
+    /** And the pair the other way round, one unit apart, is still a range. */
+    public function test_bounds_a_float_cannot_tell_apart_are_still_a_range(): void
+    {
+        $criteria = ProductCriteria::of(minPrice: '999999999999999.9998', maxPrice: '999999999999999.9999');
+
+        self::assertSame('999999999999999.9998', $criteria->minPrice);
+    }
+
     public function test_an_unknown_sort_is_refused_and_the_message_lists_the_known_ones(): void
     {
         try {

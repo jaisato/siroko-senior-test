@@ -66,6 +66,39 @@ final class PatchProductControllerTest extends ApiTestCase
         self::assertSame(['amount' => '24.00', 'currency' => 'EUR'], $this->json()['subtotal'], 'a pending cart is priced at today\'s prices');
     }
 
+    /**
+     * The line follows the price, which is the point above - but it cannot
+     * follow it into another currency. A cart mixing currencies has no
+     * subtotal, so reading it answers 409 and checkout rolls back, for ever:
+     * the customer cannot repair a cart broken by somebody else's edit.
+     */
+    public function test_a_currency_change_under_a_pending_cart_is_a_409_problem(): void
+    {
+        $product = $this->persistProduct(amount: '10.00');
+        $cart = $this->persistCartWithLines(1, [[$product, 2]]);
+
+        $this->request('PATCH', $this->url('api_update_product', ['id' => $product->id()->toString()]), ['price' => ['amount' => '10.00', 'currency' => 'USD']]);
+
+        $this->assertProblem(409, 'cannot change from EUR to USD');
+
+        // And the cart is still readable, which is the whole point.
+        $this->request('GET', $this->url('api_get_cart_by_id', ['id' => $cart->id()->toString()]));
+        self::assertResponseStatusCodeSame(200);
+    }
+
+    /** Once the cart is out of the way the currency moves freely. */
+    public function test_the_currency_changes_once_no_pending_cart_holds_the_product(): void
+    {
+        $product = $this->persistProduct(amount: '10.00');
+        $cart = $this->persistCartWithLines(1, [[$product, 2]]);
+        $this->request('DELETE', $this->url('api_cancel_cart_by_id', ['id' => $cart->id()->toString()]));
+        self::assertResponseStatusCodeSame(204);
+
+        $this->request('PATCH', $this->url('api_update_product', ['id' => $product->id()->toString()]), ['price' => ['amount' => '10.00', 'currency' => 'USD']]);
+
+        self::assertResponseStatusCodeSame(200);
+    }
+
     public function test_an_empty_update_is_a_400_problem(): void
     {
         $product = $this->persistProduct();

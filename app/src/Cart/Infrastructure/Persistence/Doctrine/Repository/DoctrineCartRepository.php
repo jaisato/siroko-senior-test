@@ -10,6 +10,7 @@ use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\QueryBuilder;
 use Ramsey\Uuid\Uuid;
 use Siroko\Cart\Domain\Entity\Cart;
+use Siroko\Cart\Domain\ValueObject\ProductId;
 use Siroko\Cart\Domain\Entity\CartItem;
 use Siroko\Cart\Domain\Repository\CartRepository;
 use Siroko\Cart\Domain\ValueObject\CartId;
@@ -20,6 +21,7 @@ use Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\CartIdType;
 use Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\CartStatusType;
 use Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\CustomerIdType;
 use Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\ItemIdType;
+use Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\ProductIdType;
 
 final class DoctrineCartRepository implements CartRepository
 {
@@ -124,6 +126,23 @@ final class DoctrineCartRepository implements CartRepository
             ->getArrayResult();
 
         return array_map(static fn(array $row): CartId => $row['id'], $rows);
+    }
+
+    public function anyPendingHolds(ProductId $productId): bool
+    {
+        $found = $this->em->createQueryBuilder()
+            ->select('1')
+            ->from(CartItem::class, 'i')
+            ->join('i.cart', 'c')
+            ->where('i.product = :product')
+            ->andWhere('c.status = :pending')
+            ->setParameter('product', $productId, ProductIdType::NAME)
+            ->setParameter('pending', CartStatus::pending(), CartStatusType::NAME)
+            ->setMaxResults(1)
+            ->getQuery()
+            ->getScalarResult();
+
+        return [] !== $found;
     }
 
     /**
