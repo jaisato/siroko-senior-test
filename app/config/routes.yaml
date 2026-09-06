@@ -5,3 +5,10 @@ api:
     resource: './routes/api/'
     type: directory
     prefix: '%api_route_prefix%'
+
+# The one route outside the API Platform resources: GET /health has no read
+# model and no version, and the container healthchecks probe it at a fixed
+# path. Outside the API prefix it is also public when API_TOKENS is set.
+health:
+    resource: '../src/Cart/Infrastructure/Api/Controller/Health/'
+    type: attribute
