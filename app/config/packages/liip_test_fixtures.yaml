@@ -1,0 +1,14 @@
+when@test:
+    liip_test_fixtures:
+        # Nobody but the schema's owner touches DDL. Left at its default (false),
+        # this bundle calls SchemaTool::updateSchema() on every loadFixtures()
+        # call: harmless on SQLite, where DDL is transactional, and fatal on
+        # MySQL, where any DDL commits the open transaction implicitly. That
+        # transaction is the one dama/doctrine-test-bundle opened to roll the
+        # test back, so its SAVEPOINT DAMA_TEST vanishes mid-test and every test
+        # from that point on dies with "SAVEPOINT DAMA_TEST does not exist".
+        #
+        # The schema already has an owner in both profiles: tests/bootstrap.php
+        # builds it from the mappings for SQLite, and the migrations build it for
+        # MySQL. Fixtures only need rows.
+        keep_database_and_schema: true
