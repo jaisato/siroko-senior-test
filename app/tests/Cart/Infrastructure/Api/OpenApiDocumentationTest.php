@@ -60,6 +60,44 @@ final class OpenApiDocumentationTest extends ApiTestCase
         self::assertSame($routed, $documented);
     }
 
+    /** Outside the API as well: a documented path that no route serves is a promise nobody keeps. */
+    public function test_every_documented_path_is_a_route(): void
+    {
+        $routed = [];
+        $router = static::getContainer()->get(RouterInterface::class);
+
+        foreach ($router->getRouteCollection() as $route) {
+            $routed[] = preg_replace('/(\.\{_format\}|\{\._format\})$/', '', $route->getPath());
+        }
+
+        $paths = $this->document()['paths'] ?? null;
+        self::assertIsArray($paths);
+
+        foreach (array_keys($paths) as $path) {
+            self::assertContains($path, $routed, "$path is documented but no route serves it");
+        }
+    }
+
+    /** GET /health is a plain Symfony route, so the factory has to be told about it. */
+    public function test_the_health_endpoint_is_documented_outside_the_api(): void
+    {
+        $document = $this->document();
+        $health = $document['paths'][OpenApiFactoryDecorator::HEALTH_PATH]['get'] ?? null;
+        self::assertIsArray($health);
+
+        self::assertSame([200, 503], array_keys(self::responses($health)));
+        self::assertSame([], $health['security'] ?? null, 'no token is ever needed');
+        self::assertArrayHasKey(OpenApiFactoryDecorator::HEALTH_SCHEMA_NAME, $document['components']['schemas'] ?? []);
+
+        foreach (self::responses($health) as $status => $response) {
+            self::assertSame(
+                ['application/json' => ['schema' => ['$ref' => '#/components/schemas/' . OpenApiFactoryDecorator::HEALTH_SCHEMA_NAME]]],
+                $response['content'] ?? null,
+                "health $status is a status report, not a Problem",
+            );
+        }
+    }
+
     public function test_every_error_response_is_the_shared_problem(): void
     {
         $checked = 0;

@@ -4,6 +4,12 @@ services:
         autoconfigure: true
         public: false
 
+    _instanceof:
+        # Every probe is a check GET /health and app:health run; HealthChecker
+        # collects them by this tag, so a new dependency is one more class.
+        Siroko\Cart\Infrastructure\Health\HealthProbe:
+            tags: ['app.health_probe']
+
     Siroko\Cart\Infrastructure\Persistence\Doctrine\Fixtures\:
         resource: '../../../src/Cart/Infrastructure/Persistence/Doctrine/Fixtures'
         tags: ['doctrine.fixture.orm']
@@ -35,9 +41,22 @@ services:
         resource: '../../../src/Cart/Infrastructure/Api/Controller'
         tags: ['controller.service_arguments']
 
-    # Console entry points (cart:release-expired); tagged through #[AsCommand].
+    # Console entry points (cart:release-expired, idempotency:purge-expired,
+    # app:health); tagged through #[AsCommand].
     Siroko\Cart\Infrastructure\Console\:
         resource: '../../../src/Cart/Infrastructure/Console'
+
+    # Health: the database, and the transport the domain events travel by -
+    # the same one the worker consumes, so the check means what it says.
+    Siroko\Cart\Infrastructure\Health\DatabaseProbe: ~
+
+    Siroko\Cart\Infrastructure\Health\MessengerProbe:
+        arguments:
+            $transport: '@messenger.transport.async'
+
+    Siroko\Cart\Infrastructure\Health\HealthChecker:
+        arguments:
+            $probes: !tagged_iterator app.health_probe
 
     # Optional API-token authentication. Off while API_TOKENS is empty.
     Siroko\Cart\Infrastructure\Api\Security\ApiTokens:

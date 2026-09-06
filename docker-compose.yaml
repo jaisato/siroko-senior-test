@@ -24,6 +24,14 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    healthcheck:
+      # The checks GET /health runs, for a container without a web server.
+      # Unhealthy on a fresh clone until `make install` and `make migrate`.
+      test: ["CMD", "php", "app/bin/console", "app:health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 
   # Consumes the domain events routed to the `async` transport, which lives in
@@ -50,6 +58,13 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    healthcheck:
+      # What the worker needs to do its job: the database and the queue table.
+      test: ["CMD", "php", "app/bin/console", "app:health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 
   # Housekeeping once a minute: releases the stock of pending carts whose
@@ -77,10 +92,18 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "php", "app/bin/console", "app:health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 
   nginx:
     image: nginx:1.27-alpine
+    # Started, not healthy: on a fresh clone php reports unhealthy until
+    # `make install` and `make migrate`, and nginx has to be up for that flow.
     depends_on:
       - php
     ports:
@@ -89,6 +112,13 @@ services:
       # Only the document root is exposed to the web server.
       - ./app/public:/var/www/app/public:ro
       - ./nginx/symfony.conf:/etc/nginx/conf.d/default.conf:ro
+    healthcheck:
+      # Through the whole stack: nginx, php-fpm, the database and the queue.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 
   db:

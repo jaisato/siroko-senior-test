@@ -8,6 +8,9 @@ use ApiPlatform\OpenApi\Factory\OpenApiFactoryInterface;
 use ApiPlatform\OpenApi\Model;
 use ApiPlatform\OpenApi\OpenApi;
 use Siroko\Cart\Infrastructure\Api\Security\ApiTokenAuthenticator;
+use Siroko\Cart\Infrastructure\Health\DatabaseProbe;
+use Siroko\Cart\Infrastructure\Health\HealthReport;
+use Siroko\Cart\Infrastructure\Health\MessengerProbe;
 
 /**
  * Adds to the generated document what the resource attributes cannot say.
@@ -19,12 +22,44 @@ use Siroko\Cart\Infrastructure\Api\Security\ApiTokenAuthenticator;
  * may be empty), and the 401 every versioned route answers when tokens are
  * on and none is presented. Repeating that 401 in every attribute would say
  * nothing the firewall does not already decide for all of them at once.
+ *
+ * GET /health is documented here as well: it is a plain Symfony route, not an
+ * API Platform resource, and the factory would not see it otherwise.
  */
 final class OpenApiFactoryDecorator implements OpenApiFactoryInterface
 {
     public const BEARER_SCHEME = 'bearerAuth';
 
     public const API_KEY_SCHEME = 'apiKeyAuth';
+
+    public const HEALTH_PATH = '/health';
+
+    public const HEALTH_SCHEMA_NAME = 'Health';
+
+    private const HEALTH_TAG = 'Health';
+
+    /**
+     * @var array<string, mixed>
+     */
+    private const HEALTH_SCHEMA = [
+        'type' => 'object',
+        'description' => 'The verdict of every dependency check. Only verdicts: the reason a check failed is in the log.',
+        'required' => ['status', 'checks'],
+        'additionalProperties' => false,
+        'properties' => [
+            'status' => [
+                'type' => 'string',
+                'enum' => [HealthReport::OK, HealthReport::FAIL],
+                'description' => '"ok" when every check passed (HTTP 200), "fail" otherwise (HTTP 503).',
+            ],
+            'checks' => [
+                'type' => 'object',
+                'description' => 'One entry per check, by name.',
+                'additionalProperties' => ['type' => 'string', 'enum' => [HealthReport::OK, HealthReport::FAIL]],
+                'examples' => [[DatabaseProbe::NAME => HealthReport::OK, MessengerProbe::NAME => HealthReport::OK]],
+            ],
+        ],
+    ];
 
     public function __construct(
         private readonly OpenApiFactoryInterface $decorated,
@@ -38,6 +73,7 @@ final class OpenApiFactoryDecorator implements OpenApiFactoryInterface
 
         $schemas = $components->getSchemas() ?? new \ArrayObject();
         $schemas[Problem::SCHEMA_NAME] = new \ArrayObject(Problem::SCHEMA);
+        $schemas[self::HEALTH_SCHEMA_NAME] = new \ArrayObject(self::HEALTH_SCHEMA);
 
         $securitySchemes = $components->getSecuritySchemes() ?? new \ArrayObject();
         $securitySchemes[self::BEARER_SCHEME] = new Model\SecurityScheme(
@@ -60,9 +96,12 @@ final class OpenApiFactoryDecorator implements OpenApiFactoryInterface
             $paths->addPath($path, self::withTidyResponses($pathItem, $this->isVersioned($path)));
         }
 
+        $paths->addPath(self::HEALTH_PATH, self::healthPathItem());
+
         return $openApi
             ->withComponents($components->withSchemas($schemas)->withSecuritySchemes($securitySchemes))
             ->withPaths($paths)
+            ->withTags([...$openApi->getTags(), new Model\Tag(self::HEALTH_TAG, 'The health of the service: the checks the container healthchecks rely on.')])
             // Alternatives: no credentials at all (API_TOKENS empty), or a token
             // by either header. The empty requirement - an object, not a list,
             // which is why it is an ArrayObject - is what makes them optional.
@@ -110,6 +149,28 @@ final class OpenApiFactoryDecorator implements OpenApiFactoryInterface
         ksort($responses);
 
         return $operation->withResponses($responses);
+    }
+
+    private static function healthPathItem(): Model\PathItem
+    {
+        $content = new \ArrayObject([
+            'application/json' => ['schema' => ['$ref' => '#/components/schemas/' . self::HEALTH_SCHEMA_NAME]],
+        ]);
+
+        return new Model\PathItem(
+            get: new Model\Operation(
+                operationId: 'health',
+                tags: [self::HEALTH_TAG],
+                responses: [
+                    200 => new Model\Response('Every check passed.', $content),
+                    503 => new Model\Response('At least one check failed; the body says which, the log says why.', $content),
+                ],
+                summary: 'Health of the service',
+                description: 'Runs the checks the container healthchecks rely on: the database answers a trivial query, and the message transport can be asked for its queue length (with the Doctrine transport, `messenger_messages` is reachable). Public even when API_TOKENS is set, never cached. `bin/console app:health` runs the same checks with exit code 0 or 1.',
+                // No token, ever: the authenticator does not guard this path.
+                security: [],
+            ),
+        );
     }
 
     private static function unauthorized(): Model\Response

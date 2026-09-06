@@ -72,3 +72,8 @@ RUN php bin/console cache:warmup --env=prod --no-debug \
  && chown -R www-data:www-data var
 
 USER www-data
+
+# The checks GET /health runs, for the orchestrator watching the container
+# rather than the web server in front of it.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD ["php", "bin/console", "app:health"]
