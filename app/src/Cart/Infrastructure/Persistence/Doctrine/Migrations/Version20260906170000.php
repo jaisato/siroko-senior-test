@@ -23,11 +23,15 @@ use Doctrine\Migrations\AbstractMigration;
  * (customer_id, created_at) is rebuilt by MySQL as part of the MODIFY, so the
  * listing keeps using it.
  *
+ * The mapping declares the collation too, and has to: Doctrine puts the
+ * connection's default collation on every column of the mapping side, so a
+ * column left undeclared reads as utf8mb4_unicode_ci there and
+ * `doctrine:schema:validate` calls the database out of sync.
+ *
  * SQLite, which the local test profile uses, already compares TEXT byte for
- * byte, so it never had the bug and needs nothing here. The collation is
- * deliberately not declared in the XML mapping: the schema tool would then
- * emit `COLLATE utf8mb4_bin` on SQLite too, where no such collation exists and
- * the CREATE TABLE fails.
+ * byte - it never had the bug - but it does not know the name and would refuse
+ * the CREATE TABLE. SqliteBinaryCollationMiddleware registers one that behaves
+ * the same, in the test environment only.
  */
 final class Version20260906170000 extends AbstractMigration
 {

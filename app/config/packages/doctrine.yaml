@@ -63,6 +63,13 @@ when@test:
             # `<dbname>_test`.
             dbname_suffix: '_test%env(default::TEST_TOKEN)%'
 
+    services:
+        # The customer_id columns are declared utf8mb4_bin so they compare the
+        # way CustomerId does; SQLite has that behaviour but not that name, and
+        # would refuse the CREATE TABLE. Only the local profile needs it.
+        Siroko\Cart\Infrastructure\Persistence\Doctrine\Middleware\SqliteBinaryCollationMiddleware:
+            tags: ['doctrine.middleware']
+
 when@prod:
     doctrine:
         orm:
