@@ -74,24 +74,36 @@ final class PessimisticLockingTest extends KernelTestCase
         );
         self::$committedCarts[] = $cartId->getBytes();
 
-        // The test connection is inside the transaction DAMA opened: this lock
-        // is held until the end of the test.
-        $repository = static::getContainer()->get(CartRepository::class);
-        self::assertNotNull($repository->ofIdForUpdate(CartId::fromString($cartId->toString())));
-
-        self::$other->executeStatement('SET SESSION innodb_lock_wait_timeout = 1');
-        self::$other->beginTransaction();
+        // A lock needs a transaction to belong to, and Doctrine refuses
+        // PESSIMISTIC_WRITE without one. dama/doctrine-test-bundle does keep
+        // the test inside a transaction, but it opens it on the driver
+        // connection, where DBAL's wrapper cannot see it and reports
+        // isTransactionActive() === false. So the transaction that holds this
+        // lock is opened here, and stays open while the second connection
+        // tries to take the same row.
+        $connection = $em->getConnection();
+        $connection->beginTransaction();
 
         try {
-            $this->expectException(LockWaitTimeoutException::class);
+            $repository = static::getContainer()->get(CartRepository::class);
+            self::assertNotNull($repository->ofIdForUpdate(CartId::fromString($cartId->toString())));
 
-            self::$other->executeQuery(
-                'SELECT id FROM cart WHERE id = ? FOR UPDATE',
-                [$cartId->getBytes()],
-                [ParameterType::BINARY],
-            );
+            self::$other->executeStatement('SET SESSION innodb_lock_wait_timeout = 1');
+            self::$other->beginTransaction();
+
+            try {
+                $this->expectException(LockWaitTimeoutException::class);
+
+                self::$other->executeQuery(
+                    'SELECT id FROM cart WHERE id = ? FOR UPDATE',
+                    [$cartId->getBytes()],
+                    [ParameterType::BINARY],
+                );
+            } finally {
+                self::$other->rollBack();
+            }
         } finally {
-            self::$other->rollBack();
+            $connection->rollBack();
         }
     }
 }
