@@ -37,16 +37,23 @@ class IdempotencyRecord
      * request presenting the same key finds it there and does not run the
      * work a second time.
      *
+     * It holds the key for the whole retention window, exactly as a completed
+     * record does. It used to hold it only for a short lease, so that a
+     * process killed between the business commit and the write of its answer
+     * released the key and the retry "ran for real" - which is the one thing
+     * the header promises will not happen: that retry created a second cart,
+     * or reserved the units a second time. Nothing this record can be asked
+     * afterwards distinguishes a process killed before the work from one
+     * killed after it, so the key is not handed back; see
+     * IdempotencyGuard::respond() for what a retry is told instead.
+     *
      * @param string $id          what identifies the key within its scope (see IdempotencyGuard::recordId())
      * @param string $scope       the customer the key belongs to, or '' when the API runs unauthenticated
      * @param string $fingerprint what the request looked like, so a reuse with another payload is detected
      */
-    public static function claim(string $id, string $scope, string $requestKey, string $fingerprint, \DateTimeImmutable $now, \DateInterval $lease): self
+    public static function claim(string $id, string $scope, string $requestKey, string $fingerprint, \DateTimeImmutable $now, \DateInterval $ttl): self
     {
-        // A lease, not the retention window: until the request answers, this
-        // record is only a reservation of the key. Completing it buys the
-        // longer life (see completedWith()).
-        return new self($id, $scope, $requestKey, $fingerprint, null, null, null, $now, $now->add($lease));
+        return new self($id, $scope, $requestKey, $fingerprint, null, null, null, $now, $now->add($ttl));
     }
 
     /**
@@ -116,6 +123,19 @@ class IdempotencyRecord
     public function isPending(): bool
     {
         return null === $this->responseStatus;
+    }
+
+    /**
+     * Claimed long enough ago that no honest request is still running: the
+     * process that took this key died without saying what it had done.
+     *
+     * The record stays - the key is not handed back - but a retry is told
+     * something else from "still being processed", because waiting will not
+     * help and a new key is what it needs.
+     */
+    public function isAbandonedAt(\DateTimeImmutable $now, \DateInterval $lease): bool
+    {
+        return $this->isPending() && $this->createdAt->add($lease) <= $now;
     }
 
     public function createdAt(): \DateTimeImmutable

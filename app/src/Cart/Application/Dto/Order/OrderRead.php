@@ -17,7 +17,7 @@ final class OrderRead
      * @param list<OrderLineRead>                     $lines
      * @param array{amount: string, currency: string} $total
      * @param string                                  $createdAt   RFC 3339, UTC
-     * @param string|null                             $confirmedAt RFC 3339, UTC; null until the confirmation went out
+     * @param string|null                             $confirmedAt RFC 3339, UTC; when the confirmation actually went out, null until it has
      * @param string|null                             $canceledAt  RFC 3339, UTC; null unless the purchase was called off
      */
     public function __construct(
@@ -48,7 +48,15 @@ final class OrderRead
             total: $order->total()->jsonSerialize(),
             lines: $lines,
             createdAt: self::utc($order->createdAt()),
-            confirmedAt: null === $order->confirmedAt() ? null : self::utc($order->confirmedAt()),
+            // The delivery, not the decision. `confirmedAt` on the entity is
+            // the moment the worker resolved to send, committed before the
+            // send so that a redelivery knows the decision was taken; the
+            // field this API documents is when the customer was told. Read
+            // from the decision, a send that failed after the first commit -
+            // or a worker that died between the two - had the API reporting a
+            // confirmation nobody received, and reporting it for good once the
+            // retries were spent.
+            confirmedAt: null === $order->confirmationSentAt() ? null : self::utc($order->confirmationSentAt()),
             // Without it a cancelled order reads exactly like one still
             // waiting for its worker: `confirmedAt: null` and nothing else to
             // tell the two apart.

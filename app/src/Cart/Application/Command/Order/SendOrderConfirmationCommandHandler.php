@@ -82,6 +82,30 @@ final class SendOrderConfirmationCommandHandler
             return;
         }
 
+        // Between that commit and this send, a cancellation can take the row
+        // and call the purchase off: the first transaction released the lock,
+        // and the customer's DELETE only has to win the microseconds after it.
+        // Asked once at the top and not again, the handler told a customer
+        // about a purchase the API had already accepted calling off.
+        //
+        // The read is its own short transaction and takes the lock, so it
+        // cannot answer with a cancellation half-written. What it cannot do is
+        // close the window: a cancellation committing after this read and
+        // before the log line below is not there to be seen, and the only way
+        // to give it the last word would be to hold the order's row across the
+        // delivery - blocking the customer's own request for as long as a mail
+        // service takes, and putting an unrollbackable side effect back inside
+        // a transaction, which is what the split was made to stop. What is
+        // left is a window microseconds wide instead of one as long as the
+        // queue took to reach this message.
+        if ($this->wasCanceledSinceTheDecision($order)) {
+            $this->logger->info('Order confirmation not sent, the purchase was called off first', [
+                'orderId' => $order->id()->toString(),
+            ]);
+
+            return;
+        }
+
         // Step two: the delivery, outside the transaction, because it cannot be
         // part of one - "sending" is a log line here and would be a call to a
         // mail service in a deployment, and neither rolls back. Inside the
@@ -107,5 +131,19 @@ final class SendOrderConfirmationCommandHandler
                 $this->orderRepository->save($stored);
             }
         });
+    }
+
+    /**
+     * Whether the purchase was called off between the decision and now.
+     *
+     * Under the row lock, so that a cancellation half-written cannot be read
+     * as absent; a plain read could see the row as the cancelling transaction
+     * left it before its own commit.
+     */
+    private function wasCanceledSinceTheDecision(Order $order): bool
+    {
+        return $this->session->executeAtomically(
+            fn(): bool => $this->orderRepository->ofIdForUpdate($order->id())?->isCanceled() ?? false,
+        );
     }
 }

@@ -31,13 +31,20 @@ use Symfony\Component\HttpKernel\Exception\UnprocessableEntityHttpException;
  * certainly a client bug, and answering with the stored response would hide
  * it.
  *
- * A completed record is replayable for IDEMPOTENCY_TTL seconds. A claim that
- * has not been answered yet only holds the key for IN_PROGRESS_LEASE_SECONDS,
- * and the two are deliberately different: storing the response is a second
- * write, after the cart or checkout transaction has committed, so a process
- * killed in that gap leaves a claim nobody will ever complete. On one TTL that
- * claim answered "in flight" for the whole retention window; on a lease it is
- * abandoned in minutes and the retry runs for real.
+ * A record holds its key for IDEMPOTENCY_TTL seconds whether or not its
+ * request ever answered, and a claim is never handed back. Storing the
+ * response is a second write, after the cart or checkout transaction has
+ * committed, so a process killed in that gap leaves a claim nobody will
+ * complete - and nothing the record can be asked afterwards says whether the
+ * work had been done. Released after a short lease, as this used to do, the
+ * retry "ran for real": a second cart, or the units reserved twice, which is
+ * the one outcome the header exists to prevent. Kept, the retry is refused
+ * and the caller uses a new key, which costs a request and cannot cost a
+ * duplicate.
+ *
+ * IN_PROGRESS_LEASE_SECONDS still separates the two answers: inside it the
+ * original request may genuinely still be running, so a retry is told to come
+ * back; past it nobody is coming, and the retry is told so.
  */
 final class IdempotencyGuard
 {
@@ -46,9 +53,9 @@ final class IdempotencyGuard
     public const MAX_KEY_LENGTH = 255;
 
     /**
-     * Long enough that no honest request is still running, short enough that a
-     * process killed between the write and its stored answer does not lock the
-     * key out for the whole retention window.
+     * Long enough that no honest request is still running. Past it, a claim
+     * with no answer is one nobody is going to complete - which changes what
+     * a retry is told, not whether the key is still held.
      */
     public const IN_PROGRESS_LEASE_SECONDS = 300;
 
@@ -116,7 +123,7 @@ final class IdempotencyGuard
             return $answer;
         }
 
-        $claim = IdempotencyRecord::claim($id, $scope, $key, $fingerprint, $now, $this->lease);
+        $claim = IdempotencyRecord::claim($id, $scope, $key, $fingerprint, $now, $this->ttl);
 
         if (!$this->store->claim($claim)) {
             // Somebody claimed it between the read above and this write.
@@ -158,13 +165,31 @@ final class IdempotencyGuard
             return $this->errors->toResponse(new UnprocessableEntityHttpException(\sprintf('The %s header was already used with a different request; use a new key for a new request.', self::HEADER)));
         }
 
-        return $record->isPending() ? $this->inFlight() : $record->replay();
+        if (!$record->isPending()) {
+            return $record->replay();
+        }
+
+        return $record->isAbandonedAt($now, $this->lease) ? $this->unresolved() : $this->inFlight();
     }
 
     /** The original request holding this key has not answered yet. */
     private function inFlight(): Response
     {
         return $this->errors->toResponse(new ConflictHttpException(\sprintf('A request with this %s is still being processed; retry in a moment.', self::HEADER)));
+    }
+
+    /**
+     * The request that took this key died without saying what it had done.
+     *
+     * Retrying under the same key is refused rather than run: whether the work
+     * committed is exactly what nobody can tell, and running it again is how
+     * a second cart gets created or the units get reserved twice. The caller
+     * reads back what it was creating and, if it is not there, sends a new
+     * key.
+     */
+    private function unresolved(): Response
+    {
+        return $this->errors->toResponse(new ConflictHttpException(\sprintf('The request that used this %s never reported an outcome, so it cannot be retried under the same key; check whether it took effect and use a new key.', self::HEADER)));
     }
 
     /**

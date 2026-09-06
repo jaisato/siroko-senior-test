@@ -31,6 +31,7 @@ final class GetOrderByIdQueryHandlerTest extends TestCase
     {
         $order = $this->order();
         $order->confirm(new \DateTimeImmutable('2026-09-06 10:05:00', new \DateTimeZone('Europe/Madrid')));
+        $order->markConfirmationSent(new \DateTimeImmutable('2026-09-06 10:05:00', new \DateTimeZone('Europe/Madrid')));
 
         $orders = $this->createStub(OrderRepository::class);
         $orders->method('ofId')->willReturn($order);
@@ -48,6 +49,27 @@ final class GetOrderByIdQueryHandlerTest extends TestCase
         self::assertSame(['amount' => '20.00', 'currency' => 'EUR'], $read->lines[0]->lineTotal);
         self::assertSame('2026-09-06T10:00:00+00:00', $read->createdAt);
         self::assertSame('2026-09-06T08:05:00+00:00', $read->confirmedAt, 'instants are reported in UTC');
+    }
+
+    /**
+     * The field is the delivery, not the decision that precedes it. Read from
+     * `confirmedAt` on the entity - committed before the send so a redelivery
+     * knows the decision was taken - a send that failed afterwards, or a
+     * worker that died between the two, had the API reporting a confirmation
+     * nobody received, and reporting it for good once the retries were spent.
+     */
+    public function test_an_order_whose_confirmation_was_decided_but_not_sent_reports_none(): void
+    {
+        $order = $this->order();
+        $order->confirm(new \DateTimeImmutable('2026-09-06 10:05:00', new \DateTimeZone('UTC')));
+
+        $orders = $this->createStub(OrderRepository::class);
+        $orders->method('ofId')->willReturn($order);
+
+        $read = (new GetOrderByIdQueryHandler($orders))(new GetOrderByIdQuery($order->id()->toString()));
+
+        self::assertTrue($order->isConfirmed());
+        self::assertNull($read->confirmedAt);
     }
 
     public function test_an_unconfirmed_order_has_no_confirmation_time(): void
