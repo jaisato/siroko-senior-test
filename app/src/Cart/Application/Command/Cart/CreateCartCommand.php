@@ -60,6 +60,16 @@ final class CreateCartCommand
     {
         $this->customerId = null === $customerId ? null : CustomerId::fromString($customerId);
 
+        // Both bounds, because the published schema declares both. Only the
+        // upper one was checked, so `{"products": []}` created an empty cart
+        // and answered 201 - against an operation whose `minItems: 1` and
+        // documented 400 say otherwise, and for a cart the checkout then
+        // refuses as empty. A client generated from that document sends what
+        // the document allows and gets an answer it does not describe.
+        if ([] === $products) {
+            throw InvalidCartLineException::noLines();
+        }
+
         if (\count($products) > self::MAX_LINES) {
             throw InvalidCartLineException::tooManyLines(self::MAX_LINES);
         }

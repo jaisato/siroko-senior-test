@@ -32,4 +32,9 @@ final class InvalidCartLineException extends \DomainException
     {
         return new self(\sprintf('A cart accepts at most %d lines.', $max));
     }
+
+    public static function noLines(): self
+    {
+        return new self('A cart is created with at least one line.');
+    }
 }

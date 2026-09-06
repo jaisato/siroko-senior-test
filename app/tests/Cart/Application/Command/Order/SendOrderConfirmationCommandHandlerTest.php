@@ -55,13 +55,22 @@ final class SendOrderConfirmationCommandHandlerTest extends TestCase
 
         self::assertTrue($order->isConfirmed());
         self::assertSame('2026-09-06T10:05:00+00:00', $order->confirmedAt()?->format(\DateTimeInterface::RFC3339));
-        self::assertSame(1, $this->saves);
+        self::assertTrue($order->isConfirmationSent());
+        self::assertSame(2, $this->saves, 'the decision and the delivery are two writes');
         self::assertCount(1, $this->logger->records);
         self::assertSame('info', $this->logger->records[0]['level']);
         self::assertStringContainsString('sent', $this->logger->records[0]['message']);
         self::assertSame($order->id()->toString(), $this->logger->records[0]['context']['orderId']);
         self::assertSame('20.00 EUR', $this->logger->records[0]['context']['total']);
-        self::assertSame(['begin', 'lockOrder', 'saveOrder', 'commit'], $this->session->log);
+
+        // Decide and commit, send, record the send. The delivery sits between
+        // two transactions rather than inside one: it cannot be rolled back,
+        // and a commit that failed over it told the customer something the row
+        // then denied.
+        self::assertSame(
+            ['begin', 'lockOrder', 'saveOrder', 'commit', 'begin', 'lockOrder', 'saveOrder', 'commit'],
+            $this->session->log,
+        );
     }
 
     /** Redelivery: the first timestamp stands and nothing is written again. */
@@ -75,10 +84,11 @@ final class SendOrderConfirmationCommandHandlerTest extends TestCase
         $this->handler($order, $second)(new SendOrderConfirmationCommand($order->id()->toString()));
 
         self::assertSame('2026-09-06T10:05:00+00:00', $order->confirmedAt()?->format(\DateTimeInterface::RFC3339));
-        self::assertSame(1, $this->saves, 'the second run did not write');
+        self::assertSame('2026-09-06T10:05:00+00:00', $order->confirmationSentAt()?->format(\DateTimeInterface::RFC3339));
+        self::assertSame(2, $this->saves, 'the second run did not write');
         self::assertCount(2, $this->logger->records);
         self::assertStringContainsString('nothing to do', $this->logger->records[1]['message']);
-        self::assertTrue($this->logger->records[1]['context']['confirmed']);
+        self::assertTrue($this->logger->records[1]['context']['sent']);
         self::assertFalse($this->logger->records[1]['context']['canceled']);
     }
 

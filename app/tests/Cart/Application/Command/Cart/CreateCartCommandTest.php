@@ -80,13 +80,22 @@ final class CreateCartCommandTest extends TestCase
     }
 
     /**
-     * Sin productos, `$items` se quedaba sin inicializar y `getItems()` moría
-     * con "must not be accessed before initialization" -un 500 por una lista
-     * vacía-.
+     * The published operation declares `minItems: 1` and a 400, and only the
+     * upper bound was checked: `{"products": []}` created an empty cart and
+     * answered 201, for a cart the checkout then refuses as empty. A client
+     * generated from that document sends what the document allows and gets an
+     * answer it does not describe.
+     *
+     * (An empty list also used to leave `$items` uninitialised, so `getItems()`
+     * died with "must not be accessed before initialization" - a 500 for the
+     * same request. The property is initialised now; this is the contract.)
      */
-    public function test_a_request_with_no_products_yields_no_items(): void
+    public function test_a_request_with_no_products_is_rejected(): void
     {
-        self::assertSame([], (new CreateCartCommand([]))->getItems());
+        $this->expectException(InvalidCartLineException::class);
+        $this->expectExceptionMessage('at least one line');
+
+        new CreateCartCommand([]);
     }
 
     /**
