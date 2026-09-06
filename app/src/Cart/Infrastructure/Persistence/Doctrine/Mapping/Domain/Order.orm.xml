@@ -22,7 +22,17 @@
         <field name="cartId" column="cart_id" type="cart_id" nullable="false"/>
 
         <!-- Copied from the cart at checkout; null for an ownerless cart. -->
-        <field name="customerId" column="customer_id" type="customer_id" length="64" nullable="true"/>
+        <field name="customerId" column="customer_id" type="customer_id" length="64" nullable="true">
+            <options>
+                <!-- CustomerId compares byte for byte; MySQL's default
+                     collation does not, so two customers whose ids differ only
+                     in case were one (Version20260906170000). Declared here as
+                     well because Doctrine puts the connection's default
+                     collation on the mapping side, so leaving it out makes
+                     doctrine:schema:validate report the column as changed. -->
+                <option name="collation">utf8mb4_bin</option>
+            </options>
+        </field>
 
         <!-- `order_lines`, not `lines`: LINES is a reserved word in MySQL. -->
         <field name="lines" column="order_lines" type="order_lines" nullable="false"/>
