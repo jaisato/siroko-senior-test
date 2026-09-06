@@ -27,6 +27,10 @@ use Doctrine\Migrations\AbstractMigration;
  * Which is also why the check itself runs in preUp() with the collation spelled
  * out: up() only queues its SQL, so a check inside it would still see the old
  * collation.
+ *
+ * A second check asks the other half of the same question: a code identifies a
+ * product only if the API can be asked for it, and a legacy code holding a
+ * slash names no route under `GET /v1/products/by-code/{code}`.
  */
 final class Version20260905120000 extends AbstractMigration
 {
@@ -68,6 +72,26 @@ final class Version20260905120000 extends AbstractMigration
             'product.code is not unique yet: %s%s. Decide which row keeps each code (a withdrawn product keeps its own) and re-run.',
             implode(', ', \array_slice($duplicates, 0, 10)),
             \count($duplicates) > 10 ? \sprintf(' and %d more', \count($duplicates) - 10) : '',
+        ));
+
+        // The other half of "a code identifies a product": it has to be one the
+        // API can be asked for. ProductCode refuses a slash or a control
+        // character for exactly that reason - `GET /v1/products/by-code/{code}`
+        // reads a slash as another path segment, so `ABC/123` names no route -
+        // but hydration does not re-apply the rule, so a row written before it
+        // existed keeps a code the lookup this series introduces cannot reach.
+        // Renaming it here is the same overreach as picking a winner above.
+        /** @var list<string> $unaddressable */
+        $unaddressable = $this->connection->fetchFirstColumn(
+            "SELECT code FROM product WHERE code REGEXP '[/[:cntrl:]]' ORDER BY code LIMIT 11",
+        );
+
+        $this->abortIf([] !== $unaddressable, \sprintf(
+            'These product codes cannot be addressed by GET /v1/products/by-code/{code}, which reads a slash as '
+            . 'another path segment and refuses a control character: %s%s. Rename them (PATCH /v1/products/{id}) '
+            . 'and re-run.',
+            implode(', ', \array_slice($unaddressable, 0, 10)),
+            \count($unaddressable) > 10 ? ' and more' : '',
         ));
     }
 
