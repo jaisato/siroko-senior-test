@@ -15,6 +15,7 @@ use Siroko\Cart\Domain\Exception\PriceIsNotSameCurrencyException;
 use Siroko\Cart\Domain\ValueObject\CartId;
 use Siroko\Cart\Domain\ValueObject\CartStatus;
 use Siroko\Cart\Domain\ValueObject\CustomerId;
+use Siroko\Cart\Domain\Exception\CartIsFullException;
 use Siroko\Cart\Domain\ValueObject\ItemId;
 use Siroko\Cart\Domain\ValueObject\Price;
 use Siroko\Cart\Domain\ValueObject\ProductId;
@@ -22,6 +23,17 @@ use Siroko\Cart\Domain\ValueObject\Quantity;
 
 class Cart
 {
+    /**
+     * How many distinct products one cart holds.
+     *
+     * Price::MAX_AMOUNT is computed from this and CartItem::MAX_QUANTITY, so
+     * the two have to be enforced in the same place they are assumed: a cart
+     * that grew past the cap would build a total wider than
+     * orders.total_amount and fail at checkout, having been accepted all the
+     * way there.
+     */
+    public const MAX_LINES = 50;
+
     /**
      * @var Collection<int, CartItem>
      */
@@ -201,6 +213,8 @@ class Cart
             return $line;
         }
 
+        $this->ensureRoomForAnotherLine();
+
         $line = new CartItem($newLineId, $product, $units);
         $this->items->add($line);
         $line->setCart($this);
@@ -235,8 +249,23 @@ class Cart
             return;
         }
 
+        $this->ensureRoomForAnotherLine();
+
         $this->items->add($item);
         $item->setCart($this);
+    }
+
+    /**
+     * The cap was checked only where a whole cart arrives at once, so adding
+     * products one request at a time walked straight past it.
+     *
+     * @throws CartIsFullException
+     */
+    private function ensureRoomForAnotherLine(): void
+    {
+        if ($this->items->count() >= self::MAX_LINES) {
+            throw CartIsFullException::atLineLimit(self::MAX_LINES);
+        }
     }
 
     /**

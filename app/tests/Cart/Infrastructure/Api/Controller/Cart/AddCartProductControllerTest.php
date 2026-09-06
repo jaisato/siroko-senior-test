@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Siroko\Tests\Cart\Infrastructure\Api\Controller\Cart;
 
 use Ramsey\Uuid\Uuid;
+use Siroko\Cart\Domain\Entity\Cart;
 use Siroko\Cart\Domain\ValueObject\CartStatus;
 use Siroko\Tests\Cart\Infrastructure\Api\ApiTestCase;
 
@@ -170,6 +171,35 @@ final class AddCartProductControllerTest extends ApiTestCase
 
         $this->assertProblem(409, 'out of stock');
         self::assertCount(0, $this->reloadCart($cart)->items());
+    }
+
+    /**
+     * The cap was applied only to a cart created in one request, so this
+     * endpoint grew a cart past it one product at a time - and a cart with
+     * more lines than Price::MAX_AMOUNT assumes fails at checkout with a 500.
+     *
+     * 409 and not 400: the request naming one more product is perfectly well
+     * formed, and what refuses it is the state of the cart.
+     */
+    public function test_a_full_cart_refuses_another_product_and_reserves_nothing(): void
+    {
+        $lines = [];
+
+        for ($line = 0; $line < Cart::MAX_LINES; ++$line) {
+            $lines[] = [$this->persistProduct('Line ' . $line), 1];
+        }
+
+        $cart = $this->persistCartWithLines(CartStatus::PENDING, $lines);
+        $extra = $this->persistProduct('One too many', stock: 3);
+
+        $this->request('PUT', $this->url('api_add_cart_product_by_id', [
+            'cartId' => $cart->id()->toString(),
+            'productId' => $extra->id()->toString(),
+        ]));
+
+        $this->assertProblem(409, 'at most ' . Cart::MAX_LINES . ' distinct products');
+        self::assertSame(3, $this->stockOf($extra), 'the reservation rolled back with the transaction');
+        self::assertCount(Cart::MAX_LINES, $this->reloadCart($cart)->items());
     }
 
     public function test_a_malformed_cart_id_is_a_404_problem(): void
