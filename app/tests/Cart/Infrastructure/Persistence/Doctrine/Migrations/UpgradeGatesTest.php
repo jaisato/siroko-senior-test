@@ -12,6 +12,7 @@ use PHPUnit\Framework\TestCase;
 use Psr\Log\NullLogger;
 use Siroko\Cart\Domain\Entity\Cart;
 use Siroko\Cart\Domain\Entity\CartItem;
+use Siroko\Cart\Domain\ValueObject\CartStatus;
 use Siroko\Cart\Infrastructure\Persistence\Doctrine\Migrations\Version20260905120000;
 use Siroko\Cart\Infrastructure\Persistence\Doctrine\Migrations\Version20260906100000;
 use Siroko\Cart\Infrastructure\Persistence\Doctrine\Migrations\Version20260906190000;
@@ -69,8 +70,14 @@ final class UpgradeGatesTest extends TestCase
      * overflow an order total. Selecting it stopped the deploy for good: the
      * message asks the operator to reprice or withdraw it, and it was already
      * withdrawn.
+     *
+     * With one exception, which is the second half of the question the gate
+     * asks: withdrawing does not reach into carts. Units a pending cart already
+     * holds stay its own until they are released or paid, and checkout does not
+     * re-ask the catalogue, so a withdrawn product sitting in a pending cart
+     * still overflows the order total.
      */
-    public function test_the_price_ceiling_gate_looks_only_at_products_still_on_sale(): void
+    public function test_the_price_ceiling_gate_looks_at_what_can_still_reach_a_checkout(): void
     {
         $asked = [];
         $migration = new Version20260906190000($this->connection($asked, [[]]), new NullLogger());
@@ -79,6 +86,8 @@ final class UpgradeGatesTest extends TestCase
 
         self::assertCount(1, $asked);
         self::assertStringContainsString('deleted_at IS NULL', $asked[0]['sql']);
+        self::assertStringContainsString('cart_item', $asked[0]['sql'], 'a withdrawn product a pending cart holds is still chargeable');
+        self::assertSame(CartStatus::PENDING, $asked[0]['params']['pending']);
     }
 
     public function test_a_product_on_sale_above_the_price_ceiling_stops_the_upgrade(): void

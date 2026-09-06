@@ -6,6 +6,7 @@ namespace Siroko\Cart\Infrastructure\Persistence\Doctrine\Migrations;
 
 use Doctrine\DBAL\Schema\Schema;
 use Doctrine\Migrations\AbstractMigration;
+use Siroko\Cart\Domain\ValueObject\CartStatus;
 use Siroko\Cart\Domain\ValueObject\Price;
 
 /**
@@ -19,7 +20,8 @@ use Siroko\Cart\Domain\ValueObject\Price;
  *
  * Such a row stops this migration rather than being rewritten by it: the price
  * a customer is charged is not something a migration may decide. Whoever runs
- * it reprices those products, or withdraws them, and runs it again.
+ * it reprices those products - or withdraws them, which is enough only while
+ * no pending cart is still holding one - and runs it again.
  */
 final class Version20260906190000 extends AbstractMigration
 {
@@ -34,20 +36,37 @@ final class Version20260906190000 extends AbstractMigration
      */
     public function preUp(Schema $schema): void
     {
-        // Only what is still on sale. A withdrawn product cannot be added to a
-        // cart, so its price can no longer overflow anything, and stopping the
-        // deploy over one would be asking for a fix (withdraw it) that has
-        // already been applied.
+        // Only what can still reach a checkout. A withdrawn product cannot be
+        // added to a cart, so stopping the deploy over one would be asking for
+        // a fix (withdraw it) that has already been applied - but withdrawing
+        // does not reach into carts: units a pending cart already holds are
+        // its own until they are released or paid, and checkout does not
+        // re-ask the catalogue. A withdrawn product sitting in a pending cart
+        // therefore overflows `orders.total_amount` exactly like one on sale.
         $overpriced = $this->connection->fetchFirstColumn(
-            'SELECT code FROM product WHERE price_amount > :maximum AND deleted_at IS NULL ORDER BY code LIMIT 10',
-            ['maximum' => Price::MAX_AMOUNT],
+            <<<'SQL'
+                SELECT p.code
+                  FROM product p
+                 WHERE p.price_amount > :maximum
+                   AND (p.deleted_at IS NULL
+                        OR EXISTS (SELECT 1
+                                     FROM cart_item i
+                                     JOIN cart c ON c.id = i.cart_id
+                                    WHERE i.product_id = p.id
+                                      AND c.status = :pending))
+                 ORDER BY p.code
+                 LIMIT 10
+                SQL,
+            ['maximum' => Price::MAX_AMOUNT, 'pending' => CartStatus::PENDING],
         );
 
         $this->abortIf(
             [] !== $overpriced,
             \sprintf(
                 'These products are priced above the maximum a unit price may hold (%s), so a full cart of one '
-                . 'would overflow the order total: %s. Reprice or withdraw them, then run this migration again.',
+                . 'would overflow the order total: %s. Reprice them, then run this migration again. Withdrawing '
+                . 'one is enough only while no pending cart holds it; cancel those carts through the API '
+                . '(DELETE /v1/carts/{id}), which puts the units back on the shelf.',
                 Price::MAX_AMOUNT,
                 implode(', ', array_map(strval(...), $overpriced)),
             ),
