@@ -33,11 +33,14 @@
             </options>
         </field>
 
-        <field name="responseStatus" column="response_status" type="smallint" nullable="false"/>
+        <!-- Null while the request that claimed the key is still running: the
+             claim is written before the work, so that two requests carrying
+             one new key cannot both execute it. -->
+        <field name="responseStatus" column="response_status" type="smallint" nullable="true"/>
 
-        <field name="responseContentType" column="response_content_type" type="string" length="100" nullable="false"/>
+        <field name="responseContentType" column="response_content_type" type="string" length="100" nullable="true"/>
 
-        <field name="responseBody" column="response_body" type="text" nullable="false"/>
+        <field name="responseBody" column="response_body" type="text" nullable="true"/>
 
         <field name="createdAt" column="created_at" type="datetime_immutable" nullable="false"/>
 

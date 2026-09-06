@@ -65,6 +65,9 @@ final class DoctrineProductRepository implements ProductRepository
     {
         $this->guardUnits($units);
 
+        // Sin `deleted_at IS NULL`, a diferencia de la reserva: las unidades que
+        // un carrito soltó son suyas de devolver aunque el producto se haya
+        // retirado del catálogo entre medias. Retenerlas no las vende a nadie.
         $this->em->getConnection()->executeStatement(
             'UPDATE product SET quantity = quantity + :units WHERE id = :id',
             ['units' => $units, 'id' => $id],
@@ -78,13 +81,19 @@ final class DoctrineProductRepository implements ProductRepository
      * Un único UPDATE condicional: comprobar y restar son la misma operación,
      * de modo que dos altas simultáneas no pueden pasar las dos la comprobación
      * y vender de más. `rowCount()` distingue "reservado" de "no había stock".
+     *
+     * `deleted_at IS NULL` está en el mismo UPDATE por el mismo motivo: si la
+     * retirada del catálogo se comprueba en una lectura anterior, una baja que
+     * se confirme entre esa lectura y esta resta deja reservadas unidades de un
+     * producto que ya no se vende. Reservar sobre un producto retirado devuelve
+     * false, igual que quedarse sin stock; el 409 que ve el cliente es el mismo.
      */
     public function reserveStock(ProductId $id, int $units): bool
     {
         $this->guardUnits($units);
 
         $affected = $this->em->getConnection()->executeStatement(
-            'UPDATE product SET quantity = quantity - :units WHERE id = :id AND quantity >= :units',
+            'UPDATE product SET quantity = quantity - :units WHERE id = :id AND quantity >= :units AND deleted_at IS NULL',
             ['units' => $units, 'id' => $id],
             ['units' => ParameterType::INTEGER, 'id' => ProductIdType::NAME],
         );

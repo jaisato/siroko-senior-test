@@ -34,13 +34,22 @@ final class DomainEventMiddlewareTest extends TestCase
         $this->middleware = new DomainEventMiddleware($dispatcher, $this->publisher);
     }
 
-    public function test_events_raised_by_the_handler_are_dispatched_after_it_returns(): void
+    /**
+     * Queued as it is published, which is inside the handler's transaction:
+     * the queue is a table on the same connection, so the change and its
+     * announcement commit or roll back as one (see OutboxTest for the proof
+     * against a real doctrine transport). Dispatching after the handler
+     * returned instead kept a rolled-back command quiet, but left the window
+     * where the commit had happened and the process could still die before
+     * the event was queued.
+     */
+    public function test_events_raised_by_the_handler_are_queued_as_they_are_published(): void
     {
         $event = new FakeEvent();
 
         $result = $this->middleware->execute(new \stdClass(), function () use ($event): string {
             $this->publisher->publish($event);
-            self::assertSame([], $this->dispatched, 'nothing is dispatched while the handler runs');
+            self::assertSame([$event], $this->dispatched, 'on the queue already, inside the transaction');
 
             return 'handled';
         });
@@ -51,11 +60,11 @@ final class DomainEventMiddlewareTest extends TestCase
 
     /**
      * The publisher is a process-wide singleton. Each command subscribed a new
-     * collector and never removed it, so in a worker every command leaked one
-     * collector, and an event raised by the N-th command was also recorded -
-     * and dispatched - by the N-1 stale collectors.
+     * subscriber and never removed it, so in a worker every command leaked
+     * one, and an event raised by the N-th command was also dispatched by the
+     * N-1 stale ones.
      */
-    public function test_the_collector_is_unsubscribed_once_the_command_is_done(): void
+    public function test_the_subscriber_is_unsubscribed_once_the_command_is_done(): void
     {
         $this->middleware->execute(new \stdClass(), static fn(): int => 1);
 
@@ -70,10 +79,10 @@ final class DomainEventMiddlewareTest extends TestCase
         }
 
         self::assertCount(1, $witness->events(), 'the witness still hears events');
-        self::assertSame([], $this->dispatched, 'the middleware no longer does');
+        self::assertSame([], $this->dispatched, 'the middleware no longer queues them');
     }
 
-    public function test_the_collector_is_unsubscribed_even_when_the_handler_throws(): void
+    public function test_the_subscriber_is_unsubscribed_even_when_the_handler_throws(): void
     {
         try {
             $this->middleware->execute(new \stdClass(), static function (): never {
@@ -89,18 +98,30 @@ final class DomainEventMiddlewareTest extends TestCase
         self::assertSame([], $this->dispatched, 'no event leaks out of a failed command');
     }
 
-    public function test_events_of_a_failed_command_are_not_dispatched(): void
+    /**
+     * The subscription is what a failed command loses, not the events it had
+     * already queued: those are rows in the transaction that is rolling back,
+     * and the database takes them with it. What must not happen is the
+     * command's own failure leaking the subscription to whatever runs next.
+     */
+    public function test_a_failed_command_stops_queueing_at_the_point_it_failed(): void
     {
+        $published = new FakeEvent();
+
         try {
-            $this->middleware->execute(new \stdClass(), function (): never {
-                $this->publisher->publish(new FakeEvent());
+            $this->middleware->execute(new \stdClass(), function () use ($published): never {
+                $this->publisher->publish($published);
 
                 throw new \RuntimeException('rolled back');
             });
         } catch (\RuntimeException) {
         }
 
-        self::assertSame([], $this->dispatched);
+        self::assertSame([$published], $this->dispatched, 'queued inside the transaction that then rolled back');
+
+        $this->dispatched = [];
+        $this->publisher->publish(new FakeEvent());
+        self::assertSame([], $this->dispatched, 'and nothing is queued once the command is over');
     }
 
     public function test_a_second_command_does_not_see_the_events_of_the_first(): void

@@ -118,10 +118,11 @@ las `IDEMPOTENCY_TTL` (24 h) y `bin/console idempotency:purge-expired` limpia la
 ### Autenticación (desactivada por defecto)
 
 Con `API_TOKENS` vacía la API es abierta, que es como está pensada la prueba. Al definirla
-(`API_TOKENS="cliente:secreto,otro:secreto2"`) cada petición necesita
-`Authorization: Bearer <secreto>` o `X-API-Key: <secreto>`, y responde `401` sin ella. El
+—pares `token:cliente` separados por comas, el token primero:
+`API_TOKENS="s3cret-for-alice:alice,s3cret-for-bob:bob"`— cada petición a `/v1` necesita
+`Authorization: Bearer <token>` o `X-API-Key: <token>`, y responde `401` sin ella. El
 carrito pasa entonces a tener dueño: `GET /v1/carts` sólo lista los del llamante y operar
-sobre el carrito de otro es un `404`.
+sobre el carrito de otro es un `404`. `/health` y `/api/docs` siguen abiertos.
 
 ### Reservas caducadas
 
@@ -211,7 +212,7 @@ Los mismos targets existen en el `Makefile` (`make cs`, `make stan`, `make lint`
 | `MESSENGER_TRANSPORT_DSN` | `app/.env` / compose | transporte Messenger de los eventos de dominio (`doctrine://default`: la cola vive en la base de datos de la aplicación) |
 | `API_ROUTE_PREFIX` | `app/.env` | prefijo de las rutas de la API (`/api`) |
 | `CORS_ALLOW_ORIGIN` | `app/.env` | orígenes permitidos por nelmio/cors |
-| `API_TOKENS` | `app/.env` / compose | `cliente:secreto` separados por comas; vacía deja la API abierta |
+| `API_TOKENS` | `app/.env` / compose | pares `token:cliente` separados por comas (el token primero); vacía deja la API abierta |
 | `CART_RESERVATION_TTL` | `app/.env` | segundos que un carrito pendiente retiene su stock (1800) |
 | `IDEMPOTENCY_TTL` | `app/.env` | segundos que se recuerda una `Idempotency-Key` (86400) |
 

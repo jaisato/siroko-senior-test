@@ -14,6 +14,10 @@ use Doctrine\Migrations\AbstractMigration;
  * keeps the lines as they were paid (a JSON snapshot) and the total that was
  * captured. `cart_id` is a plain typed column rather than a foreign key: the
  * order must not follow the cart, and carts are never deleted anyway.
+ *
+ * The snapshot column is `order_lines`, not `lines`: LINES is a reserved word in
+ * MySQL (LOAD DATA ... LINES TERMINATED BY), so the bare name is a syntax error
+ * there. SQLite does not reserve it, which is why only the MySQL run said so.
  */
 final class Version20260906120000 extends AbstractMigration
 {
@@ -28,7 +32,7 @@ final class Version20260906120000 extends AbstractMigration
             CREATE TABLE orders (
                 id BINARY(16) NOT NULL,
                 cart_id BINARY(16) NOT NULL,
-                lines JSON NOT NULL,
+                order_lines JSON NOT NULL,
                 item_count INT NOT NULL,
                 total_amount NUMERIC(19, 4) NOT NULL,
                 total_currency VARCHAR(3) NOT NULL,

@@ -146,6 +146,78 @@ final class IdempotencyGuardTest extends TestCase
         self::assertSame('alice', array_values($this->store->records)[0]->scope());
     }
 
+    /**
+     * The key is claimed before the work runs, which is the only thing that
+     * stops two simultaneous originals: recording afterwards would let both
+     * create a cart and reserve stock, and only then notice the collision.
+     */
+    public function test_the_key_is_claimed_before_the_request_runs(): void
+    {
+        $guard = $this->guard();
+        $claimedWhileRunning = null;
+
+        $guard->respond(self::request(key: 'k1'), function () use (&$claimedWhileRunning): Response {
+            $claimedWhileRunning = $this->store->find(IdempotencyGuard::recordId('', 'k1'));
+
+            return new JsonResponse(['ok' => true], 201);
+        });
+
+        self::assertNotNull($claimedWhileRunning, 'the record was already there while the work ran');
+        self::assertTrue($claimedWhileRunning->isPending(), 'and it had no answer yet');
+        self::assertFalse($this->store->find(IdempotencyGuard::recordId('', 'k1'))?->isPending());
+    }
+
+    /** A second request arriving while the first is still working is told to wait. */
+    public function test_a_request_still_in_flight_answers_409(): void
+    {
+        $guard = $this->guard();
+        $inner = null;
+
+        $guard->respond(self::request(key: 'k1'), function () use ($guard, &$inner): Response {
+            $inner = $guard->respond(self::request(key: 'k1'), $this->producer(201));
+
+            return new JsonResponse(['ok' => true], 201);
+        });
+
+        self::assertSame(409, $inner?->getStatusCode());
+        self::assertSame('application/problem+json', $inner->headers->get('Content-Type'));
+        self::assertStringContainsString('still being processed', (string) $inner->getContent());
+        self::assertSame(0, $this->executions, 'the producer of the second request never ran');
+    }
+
+    /** Losing the claim by a hair is the same answer as finding it taken. */
+    public function test_losing_the_claim_race_falls_back_to_the_winners_record(): void
+    {
+        $guard = $this->guard();
+        $winner = IdempotencyRecord::claim(IdempotencyGuard::recordId('', 'k1'), '', 'k1', IdempotencyGuard::fingerprint(self::request(key: 'k1')), $this->clock->now(), new \DateInterval('PT3600S'));
+        $this->store->claimedByAnother = $winner->completedWith(new JsonResponse(['id' => 'theirs'], 201), $this->clock->now(), new \DateInterval('PT3600S'));
+
+        $response = $guard->respond(self::request(key: 'k1'), $this->producer(201, ['id' => 'mine']));
+
+        self::assertSame(0, $this->executions);
+        self::assertSame('true', $response->headers->get(IdempotencyRecord::REPLAYED_HEADER));
+        self::assertStringContainsString('theirs', (string) $response->getContent());
+    }
+
+    /** An exception is not an answer: the claim goes back so a retry can run. */
+    public function test_a_thrown_exception_releases_the_claim_and_reaches_the_caller(): void
+    {
+        $guard = $this->guard();
+
+        try {
+            $guard->respond(self::request(key: 'k1'), static fn(): Response => throw new \RuntimeException('the database went away'));
+            self::fail('Expected the exception to reach the caller.');
+        } catch (\RuntimeException $e) {
+            self::assertSame('the database went away', $e->getMessage());
+        }
+
+        self::assertSame([], $this->store->records, 'nothing is holding the key');
+
+        $retried = $guard->respond(self::request(key: 'k1'), $this->producer(201));
+        self::assertSame(201, $retried->getStatusCode());
+        self::assertSame(1, $this->executions);
+    }
+
     public function test_a_malformed_key_is_a_400_problem_and_nothing_runs(): void
     {
         $guard = $this->guard();
@@ -219,14 +291,46 @@ final class InMemoryIdempotencyStore implements IdempotencyStore
     /** @var array<string, IdempotencyRecord> */
     public array $records = [];
 
+    /**
+     * A record to hand back on the next find(), as if another request had
+     * claimed or answered the key between this one's find() and its claim().
+     */
+    public ?IdempotencyRecord $claimedByAnother = null;
+
     public function find(string $id): ?IdempotencyRecord
     {
         return $this->records[$id] ?? null;
     }
 
-    public function save(IdempotencyRecord $record): void
+    public function claim(IdempotencyRecord $pending): bool
+    {
+        if (null !== $this->claimedByAnother) {
+            $this->records[$pending->id()] = $this->claimedByAnother;
+            $this->claimedByAnother = null;
+
+            return false;
+        }
+
+        $existing = $this->records[$pending->id()] ?? null;
+        if (null !== $existing && !$existing->isExpiredAt($pending->createdAt())) {
+            return false;
+        }
+
+        $this->records[$pending->id()] = $pending;
+
+        return true;
+    }
+
+    public function complete(IdempotencyRecord $record): void
     {
         $this->records[$record->id()] = $record;
+    }
+
+    public function release(string $id): void
+    {
+        if (($this->records[$id] ?? null)?->isPending() === true) {
+            unset($this->records[$id]);
+        }
     }
 
     public function purgeExpired(\DateTimeImmutable $now): int

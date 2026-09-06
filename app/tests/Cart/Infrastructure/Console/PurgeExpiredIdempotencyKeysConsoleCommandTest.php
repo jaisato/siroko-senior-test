@@ -19,8 +19,12 @@ final class PurgeExpiredIdempotencyKeysConsoleCommandTest extends KernelTestCase
     {
         $kernel = self::bootKernel();
         $store = static::getContainer()->get(IdempotencyStore::class);
-        $store->save(IdempotencyRecord::capture(IdempotencyGuard::recordId('', 'old'), '', 'old', 'fp', new JsonResponse([]), new \DateTimeImmutable('-2 days'), new \DateInterval('PT1H')));
-        $store->save(IdempotencyRecord::capture(IdempotencyGuard::recordId('', 'fresh'), '', 'fresh', 'fp', new JsonResponse([]), new \DateTimeImmutable(), new \DateInterval('PT1H')));
+        foreach (['old' => '-2 days', 'fresh' => 'now'] as $key => $when) {
+            $at = new \DateTimeImmutable($when);
+            $claim = IdempotencyRecord::claim(IdempotencyGuard::recordId('', $key), '', $key, 'fp', $at, new \DateInterval('PT1H'));
+            $store->claim($claim);
+            $store->complete($claim->completedWith(new JsonResponse([]), $at, new \DateInterval('PT1H')));
+        }
 
         $application = new Application($kernel);
         $application->setAutoExit(false);

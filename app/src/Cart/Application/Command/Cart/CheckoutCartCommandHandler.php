@@ -39,9 +39,13 @@ final class CheckoutCartCommandHandler
      * The order is written in the same transaction as the status change: a
      * paid cart without its order, or an order for a cart still pending, is a
      * state nothing downstream can make sense of. The `CartCheckedOut` event
-     * is published inside the transaction too; the command bus middleware
-     * collects it and hands it to the queue only once the handler has
-     * returned, so a rolled-back checkout announces nothing.
+     * joins them: publishing it puts it on the queue there and then, and the
+     * queue is a table on this same connection, so the row is part of this
+     * transaction. Committing publishes it; rolling back takes it with
+     * everything else. Handing it to the queue after the handler returned -
+     * which is what the bus middleware used to do - left the checkout
+     * committed and the confirmation still unqueued, and a process that died
+     * in between sold an order nobody would ever be told about.
      *
      * @throws CartNotFoundException
      * @throws InvalidCartStatusException when the cart was already checked out
