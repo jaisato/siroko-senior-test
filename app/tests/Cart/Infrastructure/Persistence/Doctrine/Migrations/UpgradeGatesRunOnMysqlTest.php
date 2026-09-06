@@ -14,11 +14,12 @@ use PHPUnit\Framework\Attributes\Group;
 use Psr\Log\NullLogger;
 use Siroko\Cart\Infrastructure\Persistence\Doctrine\Migrations\Version20260905120000;
 use Siroko\Cart\Infrastructure\Persistence\Doctrine\Migrations\Version20260906100000;
+use Siroko\Cart\Infrastructure\Persistence\Doctrine\Migrations\Version20260906180000;
 use Siroko\Cart\Infrastructure\Persistence\Doctrine\Migrations\Version20260906190000;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
 
 /**
- * The three upgrade gates read the database before any DDL runs, and
+ * The upgrade gates read the database before any DDL runs, and
  * UpgradeGatesTest drives them through a stubbed connection: it can check the
  * question each one asks, and cannot check that MySQL will answer it.
  *
@@ -41,6 +42,7 @@ final class UpgradeGatesRunOnMysqlTest extends KernelTestCase
     {
         yield 'product.code is unique, compared byte for byte' => [Version20260905120000::class];
         yield 'no pending cart past the line limit' => [Version20260906100000::class];
+        yield 'no cart in two currencies' => [Version20260906180000::class];
         yield 'nothing on sale above the price ceiling' => [Version20260906190000::class];
     }
 
