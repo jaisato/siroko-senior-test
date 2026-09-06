@@ -41,9 +41,12 @@ class IdempotencyRecord
      * @param string $scope       the customer the key belongs to, or '' when the API runs unauthenticated
      * @param string $fingerprint what the request looked like, so a reuse with another payload is detected
      */
-    public static function claim(string $id, string $scope, string $requestKey, string $fingerprint, \DateTimeImmutable $now, \DateInterval $ttl): self
+    public static function claim(string $id, string $scope, string $requestKey, string $fingerprint, \DateTimeImmutable $now, \DateInterval $lease): self
     {
-        return new self($id, $scope, $requestKey, $fingerprint, null, null, null, $now, $now->add($ttl));
+        // A lease, not the retention window: until the request answers, this
+        // record is only a reservation of the key. Completing it buys the
+        // longer life (see completedWith()).
+        return new self($id, $scope, $requestKey, $fingerprint, null, null, null, $now, $now->add($lease));
     }
 
     /**

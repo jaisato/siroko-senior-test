@@ -11,6 +11,7 @@ use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\QueryBuilder;
 use Ramsey\Uuid\Uuid;
 use Siroko\Cart\Domain\Entity\Product;
+use Siroko\Cart\Domain\Exception\InvalidStockAdjustmentException;
 use Siroko\Cart\Domain\Repository\ProductCriteria;
 use Siroko\Cart\Domain\Repository\ProductRepository;
 use Siroko\Cart\Domain\ValueObject\ProductCode;
@@ -68,13 +69,47 @@ final class DoctrineProductRepository implements ProductRepository
         // Sin `deleted_at IS NULL`, a diferencia de la reserva: las unidades que
         // un carrito soltó son suyas de devolver aunque el producto se haya
         // retirado del catálogo entre medias. Retenerlas no las vende a nadie.
-        $this->em->getConnection()->executeStatement(
-            'UPDATE product SET quantity = quantity + :units WHERE id = :id',
-            ['units' => $units, 'id' => $id],
-            ['units' => ParameterType::INTEGER, 'id' => ProductIdType::NAME],
+        //
+        // El techo va en el mismo UPDATE por el mismo motivo que el suelo de la
+        // reserva: `quantity` es un INT con signo y la suma se hace en la base
+        // de datos, así que sin la condición un `delta` positivo sobre un
+        // producto ya en el máximo se sale del rango de la columna y MySQL
+        // responde con un error que el cliente ve como un 500.
+        $applied = $this->em->getConnection()->executeStatement(
+            'UPDATE product SET quantity = quantity + :units WHERE id = :id AND quantity <= :max - :units',
+            ['units' => $units, 'id' => $id, 'max' => Quantity::MAX_QUANTITY],
+            ['units' => ParameterType::INTEGER, 'id' => ProductIdType::NAME, 'max' => ParameterType::INTEGER],
         );
 
+        // Cero filas puede ser "no existe" —devolver stock a un producto que ya
+        // no está es un no-op tolerado— o "no cabe", que sí hay que decirlo:
+        // callar perdería unidades de inventario.
+        if (0 === $applied) {
+            $this->refuseIfItWouldOverflow($id, $units);
+        }
+
         $this->refreshIfManaged($id);
+    }
+
+    /**
+     * @throws InvalidStockAdjustmentException si el producto existe y sumar
+     *                                         `$units` pasaría del máximo
+     */
+    private function refuseIfItWouldOverflow(ProductId $id, int $units): void
+    {
+        $current = $this->em->getConnection()->fetchOne(
+            'SELECT quantity FROM product WHERE id = :id',
+            ['id' => $id],
+            ['id' => ProductIdType::NAME],
+        );
+
+        if (false === $current) {
+            return; // El producto no está; no había nada que incrementar.
+        }
+
+        if ((int) $current > Quantity::MAX_QUANTITY - $units) {
+            throw InvalidStockAdjustmentException::wouldExceedMaximum(Quantity::MAX_QUANTITY);
+        }
     }
 
     /**

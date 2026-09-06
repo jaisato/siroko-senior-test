@@ -29,6 +29,11 @@ final class InvalidPriceException extends \DomainException
         return new self('The price amount has more decimals than the currency allows.');
     }
 
+    public static function tooLarge(string $max): self
+    {
+        return new self(\sprintf('A price cannot be greater than %s.', $max));
+    }
+
     public static function negative(): self
     {
         return new self('The price amount cannot be negative.');

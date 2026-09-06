@@ -29,7 +29,15 @@ use Symfony\Component\HttpKernel\Exception\UnprocessableEntityHttpException;
  * customers may use the same key without seeing each other's responses. A
  * key reused with a different request is refused with 422: it is almost
  * certainly a client bug, and answering with the stored response would hide
- * it. Records expire after IDEMPOTENCY_TTL seconds.
+ * it.
+ *
+ * A completed record is replayable for IDEMPOTENCY_TTL seconds. A claim that
+ * has not been answered yet only holds the key for IN_PROGRESS_LEASE_SECONDS,
+ * and the two are deliberately different: storing the response is a second
+ * write, after the cart or checkout transaction has committed, so a process
+ * killed in that gap leaves a claim nobody will ever complete. On one TTL that
+ * claim answered "in flight" for the whole retention window; on a lease it is
+ * abandoned in minutes and the retry runs for real.
  */
 final class IdempotencyGuard
 {
@@ -37,7 +45,16 @@ final class IdempotencyGuard
 
     public const MAX_KEY_LENGTH = 255;
 
+    /**
+     * Long enough that no honest request is still running, short enough that a
+     * process killed between the write and its stored answer does not lock the
+     * key out for the whole retention window.
+     */
+    public const IN_PROGRESS_LEASE_SECONDS = 300;
+
     private readonly \DateInterval $ttl;
+
+    private readonly \DateInterval $lease;
 
     /**
      * @param int $idempotencyTtlSeconds how long a stored response can be replayed
@@ -54,6 +71,9 @@ final class IdempotencyGuard
         }
 
         $this->ttl = new \DateInterval(\sprintf('PT%dS', $idempotencyTtlSeconds));
+        // Never longer than the retention window itself: a test or a
+        // deployment may configure a TTL shorter than the lease.
+        $this->lease = new \DateInterval(\sprintf('PT%dS', min(self::IN_PROGRESS_LEASE_SECONDS, $idempotencyTtlSeconds)));
     }
 
     /**
@@ -96,7 +116,7 @@ final class IdempotencyGuard
             return $answer;
         }
 
-        $claim = IdempotencyRecord::claim($id, $scope, $key, $fingerprint, $now, $this->ttl);
+        $claim = IdempotencyRecord::claim($id, $scope, $key, $fingerprint, $now, $this->lease);
 
         if (!$this->store->claim($claim)) {
             // Somebody claimed it between the read above and this write.
