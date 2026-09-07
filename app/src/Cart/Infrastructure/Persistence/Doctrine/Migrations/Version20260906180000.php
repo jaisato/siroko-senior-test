@@ -34,7 +34,8 @@ use Doctrine\Migrations\AbstractMigration;
  * build one today, so only an upgraded database can hold it - and from here on
  * Cart::subtotal() throws for it, which makes the cart unreadable and, while it
  * is pending, unpayable. Those carts stop this migration before anything is
- * written; see preUp().
+ * written; see preUp(), which also says how to clear them - in SQL, because
+ * this is the one gate whose data no endpoint of either version can reach.
  */
 final class Version20260906180000 extends AbstractMigration
 {
@@ -59,22 +60,42 @@ final class Version20260906180000 extends AbstractMigration
         /** @var list<string> $mixed */
         $mixed = $this->connection->fetchFirstColumn(
             <<<'SQL'
-                SELECT CONCAT(BIN_TO_UUID(i.cart_id), ' (', GROUP_CONCAT(DISTINCT p.price_currency SEPARATOR '/'), ')')
+                SELECT CONCAT(
+                           BIN_TO_UUID(i.cart_id), ' (',
+                           GROUP_CONCAT(DISTINCT p.price_currency SEPARATOR '/'),
+                           ', ', IF(c.status = 1, 'pending', 'settled'), ')'
+                       )
                   FROM cart_item i
                   JOIN product p ON p.id = i.product_id
-                 GROUP BY i.cart_id
+                  JOIN cart c ON c.id = i.cart_id
+                 GROUP BY i.cart_id, c.status
                 HAVING COUNT(DISTINCT p.price_currency) > 1
                  ORDER BY i.cart_id
                  LIMIT 10
                 SQL,
         );
 
+        // The way out is SQL, and it says so. It used to point at
+        // `DELETE /v1/carts/{id}`, which cannot clear this gate however many
+        // times it is run: cancelling a cart changes its status and gives the
+        // units back but keeps every line, deliberately, as the record of what
+        // was in it - and this check reads carts of every status, so the same
+        // cart comes back on the next attempt. Worse, that endpoint is part of
+        // the version being deployed: the running application does not have it,
+        // and the new one cannot read these carts at all until this migration
+        // has added the columns. So the instructions named a door that is
+        // locked from both sides.
         $this->abortIf([] !== $mixed, \sprintf(
             'These carts hold lines in more than one currency, which no cart may: every read of them would fail '
-            . 'to add up, and a pending one could not be checked out: %s. Cancel the pending ones through the API '
-            . '(DELETE /v1/carts/{id}), which puts the units back on the shelf; for a settled one the matching '
-            . 'row in `orders` is the record of what was paid, and its lines are the figures to reconcile the '
-            . 'cart with. Then run this migration again.',
+            . 'to add up, and a pending one could not be checked out: %s. Reconcile them by hand before running '
+            . 'this again - cancelling through the API does not clear this, because a canceled cart keeps its '
+            . 'lines and this reads carts of every status. A pending cart is still holding its units, so put them '
+            . 'back on the shelf and then drop its lines: '
+            . 'UPDATE product p JOIN cart_item i ON i.product_id = p.id SET p.quantity = p.quantity + i.quantity '
+            . "WHERE i.cart_id = UUID_TO_BIN('<id>'); DELETE FROM cart_item WHERE cart_id = UUID_TO_BIN('<id>'); "
+            . 'For a settled one the units are already accounted for and only the lines go '
+            . "(DELETE FROM cart_item WHERE cart_id = UUID_TO_BIN('<id>');); the matching row in `orders` is the "
+            . 'record of what was paid, and its lines are the figures to reconcile the cart with.',
             implode(', ', array_map(strval(...), $mixed)),
         ));
     }
