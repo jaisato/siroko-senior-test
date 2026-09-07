@@ -34,4 +34,21 @@ final class InvalidStockAdjustmentException extends \DomainException
     {
         return new self(\sprintf('Stock cannot exceed %d units.', $max));
     }
+
+    /**
+     * A recount that leaves no room for the units pending carts are holding.
+     *
+     * Those units come back to the column when a line is removed or a cart is
+     * abandoned, and there has to be somewhere for them to land: set to the
+     * maximum with holds outstanding, the return was refused and the cart
+     * transition rolled back with it.
+     */
+    public static function leavesNoRoomForHeldUnits(int $held, int $maximum): self
+    {
+        return new self(\sprintf(
+            'Pending carts are holding %d unit(s) of this product, so the available count cannot go above %d.',
+            $held,
+            $maximum - $held,
+        ));
+    }
 }

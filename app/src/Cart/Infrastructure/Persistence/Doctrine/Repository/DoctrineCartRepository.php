@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace Siroko\Cart\Infrastructure\Persistence\Doctrine\Repository;
 
+use Doctrine\DBAL\ArrayParameterType;
 use Doctrine\DBAL\LockMode;
+use Doctrine\DBAL\Types\Type;
 use Doctrine\DBAL\Types\Types;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\QueryBuilder;
@@ -67,6 +69,32 @@ final class DoctrineCartRepository implements CartRepository
         return $cart instanceof Cart ? $cart : null;
     }
 
+    /**
+     * The page, in two queries however many carts and lines are on it.
+     *
+     * Loading the carts alone left the reading to do the rest: `CartRead`
+     * iterates each cart's lines - an EXTRA_LAZY collection, so one query per
+     * cart - and each line dereferences its product, which is LAZY, so one
+     * more per distinct product. A full page of a hundred carts with fifty
+     * products each was around five thousand round trips for one request, and
+     * the listing timed out long before it answered.
+     *
+     * Two steps rather than one join, because a fetch-join to a to-many
+     * association and LIMIT do not mix: the limit would count *lines*, so a
+     * page of twenty carts would come back as however many carts the first
+     * twenty lines belong to. The page is chosen first and its contents are
+     * loaded after - the second query hydrates the same managed carts, which
+     * is what leaves their collections loaded instead of lazy.
+     *
+     * The ids are handed over as the bytes the column holds. `cart_id` stores a
+     * UUID as sixteen raw bytes, and an `IN` list gets one binding type for the
+     * whole list, not the column's: passing the carts, their `CartId`s or their
+     * canonical strings all bind the *text* of the UUID against a BINARY(16),
+     * which matches nothing. That failure is silent - the collections stay lazy
+     * and the listing answers exactly as it did before, one query per cart - so
+     * `DoctrineCartRepositoryTest` asserts the page arrives loaded rather than
+     * merely correct.
+     */
     public function search(?CustomerId $owner, ?CartStatus $status, int $pageNumber, int $pageSize): array
     {
         /** @var list<Cart> $carts */
@@ -77,6 +105,25 @@ final class DoctrineCartRepository implements CartRepository
             ->setMaxResults($pageSize)
             ->getQuery()
             ->getResult();
+
+        if ([] !== $carts) {
+            $cartId = Type::getType(CartIdType::NAME);
+            $platform = $this->em->getConnection()->getDatabasePlatform();
+
+            $this->em->createQueryBuilder()
+                ->select('c', 'i', 'p')
+                ->from(Cart::class, 'c')
+                ->leftJoin('c.items', 'i')
+                ->leftJoin('i.product', 'p')
+                ->where('c.id IN (:ids)')
+                ->setParameter(
+                    'ids',
+                    array_map(static fn(Cart $cart): mixed => $cartId->convertToDatabaseValue($cart->id(), $platform), $carts),
+                    ArrayParameterType::BINARY,
+                )
+                ->getQuery()
+                ->getResult();
+        }
 
         return $carts;
     }
