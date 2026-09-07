@@ -7,7 +7,6 @@ namespace Siroko\Cart\Infrastructure\Persistence\Doctrine\Repository;
 use Doctrine\DBAL\ArrayParameterType;
 use Doctrine\DBAL\LockMode;
 use Doctrine\DBAL\ParameterType;
-use Doctrine\DBAL\Platforms\AbstractMySQLPlatform;
 use Doctrine\DBAL\Types\Types;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\QueryBuilder;
@@ -294,48 +293,47 @@ final class DoctrineProductRepository implements ProductRepository
      * them, taking the cancellation down with it. A delivered or already
      * canceled cart credits nothing, so neither is counted.
      *
-     * A locking read, and the first one the caller makes: it holds the cart
-     * rows -and the gap, so a line added for this product waits- until the
-     * transaction ends, which is what makes the number still true when the
-     * write that uses it runs. Taken here, with nothing else held, it keeps the
-     * order every writer in this application takes: carts, then products.
+     * It takes no locks, and that is the point rather than an omission. Two
+     * arrangements that do were tried and both deadlock. Inside the movement's
+     * own UPDATE, as a subquery, the cart rows are read *as a locking read* -
+     * that is what InnoDB does with a subquery of a data-changing statement
+     * under REPEATABLE READ - so the adjustment held the product and reached
+     * for the carts while a cancellation held its cart and reached for the
+     * product. Moved out and taken `FOR SHARE` before the product lock, the
+     * equality on `cart_item.product_id` holds the *gap*, and adding a line for
+     * this product is an insert into it: the adjustment then held the gap and
+     * waited for the product, while an add held the product and waited for the
+     * gap. A cycle either way round, and the write bus does not retry a
+     * deadlock victim.
+     *
+     * A plain read has neither problem, and the caller's own lock on the
+     * product row is what makes the number safe to use afterwards: any cart
+     * operation that changes what is held changes the available count by the
+     * same units in the opposite direction, and that writes this product's row.
+     * So while the caller holds it, nothing can move this figure -except a
+     * delivery, which only lowers it, and a lower figure only makes the ceiling
+     * stricter-.
+     *
+     * Read *after* that lock, and by a transaction that has read nothing
+     * consistently before: under REPEATABLE READ the snapshot is created by the
+     * first non-locking read, and a locking one -the caller's- does not create
+     * it. So this statement opens the snapshot itself, and sees every cart
+     * operation that committed before the lock was taken.
      */
     public function unitsHeldInRefundableCarts(ProductId $id): int
     {
-        // The units come back one per line and are added up here rather than by
-        // SUM(): a locking clause and an aggregate are not a combination every
-        // engine takes (PostgreSQL refuses it outright), and the rows are the
-        // same ones the aggregate would have scanned - the open lines of one
-        // product - so nothing more is read for it.
-        $lines = $this->em->getConnection()->fetchFirstColumn(
-            <<<SQL
-                SELECT i.quantity
+        $held = $this->em->getConnection()->fetchOne(
+            <<<'SQL'
+                SELECT COALESCE(SUM(i.quantity), 0)
                   FROM cart_item i
                   JOIN cart c ON c.id = i.cart_id
-                 WHERE i.product_id = :id AND c.status IN (:refundable){$this->readLock()}
+                 WHERE i.product_id = :id AND c.status IN (:refundable)
                 SQL,
             ['id' => $id, 'refundable' => self::REFUNDABLE_STATUSES],
             ['id' => ProductIdType::NAME, 'refundable' => ArrayParameterType::INTEGER],
         );
 
-        return array_sum(array_map(static fn(mixed $units): int => is_numeric($units) ? (int) $units : 0, $lines));
-    }
-
-    /**
-     * The clause that makes a read hold what it read, in the spelling of the
-     * engine underneath.
-     *
-     * Empty where there is nothing to hold: SQLite - the local test profile -
-     * has one writer at a time, so a read cannot be overtaken by a write inside
-     * another transaction. Written out rather than asked of the platform
-     * because `AbstractPlatform::getReadLockSQL()` is deprecated in DBAL 4 and
-     * this project fails on its own deprecations.
-     */
-    private function readLock(): string
-    {
-        return $this->em->getConnection()->getDatabasePlatform() instanceof AbstractMySQLPlatform
-            ? ' FOR SHARE'
-            : '';
+        return is_numeric($held) ? (int) $held : 0;
     }
 
     /**

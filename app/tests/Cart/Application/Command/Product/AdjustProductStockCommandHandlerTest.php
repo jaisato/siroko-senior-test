@@ -197,23 +197,23 @@ final class AdjustProductStockCommandHandlerTest extends TestCase
     }
 
     /**
-     * Carts before products, the order every writer in this application takes.
+     * The units carts hold are read with the product's row already held.
      *
-     * The ceiling an increase has to respect is "available plus what refundable
-     * carts hold fits under the maximum", and reading what they hold locks cart
-     * rows. Asked for from inside the movement - with the product's own row
-     * already locked - it took the two in the opposite order from a
-     * cancellation, which holds its cart and then reaches for the product: the
-     * two waited for each other, MySQL killed one, and the write bus does not
-     * retry, so an ordinary adjustment or cancellation answered 500.
+     * That lock is what keeps the number true for the rest of the transaction:
+     * a cart operation that changes what is held moves the available count by
+     * the same units the other way, and that writes this row. Read before the
+     * lock the figure could still move under the movement that uses it - by a
+     * reservation that commits in between, which is the direction that lets an
+     * increase through - and there is nothing to hold the carts with that does
+     * not deadlock against one of the two cart writers.
      */
-    public function test_the_units_carts_hold_are_read_before_the_product_is_locked(): void
+    public function test_the_units_carts_hold_are_read_under_the_product_lock(): void
     {
         $product = $this->product();
 
         $this->handler($product)(new AdjustProductStockCommand($product->id()->toString(), quantity: 7));
 
-        self::assertSame(['readHeldUnits', 'lockProduct'], $this->reads);
+        self::assertSame(['lockProduct', 'readHeldUnits'], $this->reads);
     }
 
     /** And an increment takes the same order; it respects the same ceiling. */
@@ -223,7 +223,7 @@ final class AdjustProductStockCommandHandlerTest extends TestCase
 
         $this->handler($product)(new AdjustProductStockCommand($product->id()->toString(), delta: 3));
 
-        self::assertSame(['readHeldUnits', 'lockProduct'], $this->reads);
+        self::assertSame(['lockProduct', 'readHeldUnits'], $this->reads);
     }
 
     private function product(): Product

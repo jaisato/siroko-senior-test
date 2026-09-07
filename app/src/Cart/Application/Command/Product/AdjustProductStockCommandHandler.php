@@ -31,24 +31,6 @@ final class AdjustProductStockCommandHandler
     public function __invoke(AdjustProductStockCommand $command): ProductRead
     {
         return $this->session->executeAtomically(function () use ($command): ProductRead {
-            // What refundable carts hold, asked for first and with nothing else
-            // held, because reading it locks cart rows and every writer here
-            // takes carts before products. Read from inside the movement -
-            // after the product's own row was locked - it took the two in the
-            // opposite order from a cancellation, and an adjustment and a
-            // cancellation over the same product waited for each other: MySQL
-            // kills one of the two, and the write bus does not retry, so a
-            // perfectly good request answered 500.
-            //
-            // It is the ceiling every increase has to respect: what is
-            // available plus what is held has to fit under the maximum, so that
-            // calling one of those carts off always has somewhere to put its
-            // units. The number stays true until the movement runs - the read
-            // holds those rows, and a cart operation that changes what is held
-            // moves the available count by the same units the other way, which
-            // writes this product's row.
-            $held = $this->productRepository->unitsHeldInRefundableCarts($command->id());
-
             // Locked, like every other writer that decides something from the
             // row it is about to change. Read without the lock, a withdrawal
             // committing between the read and the movement turned a perfectly
@@ -64,6 +46,23 @@ final class AdjustProductStockCommandHandler
             if (null === $product) {
                 throw ProductNotFoundException::withId($command->id());
             }
+
+            // What refundable carts hold, which is the ceiling every increase
+            // has to respect: available plus held has to fit under the maximum,
+            // so that calling one of those carts off always has somewhere to
+            // put its units.
+            //
+            // Read here, and only here: with the product's row already held,
+            // and by a statement that takes no locks of its own. Both matter.
+            // The lock is what keeps the number true for the rest of the
+            // transaction - a cart operation that changes what is held moves
+            // the available count by the same units the other way, and that
+            // writes this row. Taking no locks is what keeps it out of the two
+            // deadlocks the alternatives had, which `unitsHeldInRefundableCarts()`
+            // spells out. And a locking read does not open the transaction's
+            // snapshot, so this statement opens it and sees everything that
+            // committed before the lock was taken.
+            $held = $this->productRepository->unitsHeldInRefundableCarts($command->id());
 
             $quantity = $command->quantity();
 
