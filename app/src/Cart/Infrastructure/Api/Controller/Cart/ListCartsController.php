@@ -33,15 +33,19 @@ final class ListCartsController
         try {
             $pageNumber = max(1, self::integerQuery($request, 'pageNumber', 1));
             $pageSize = min(ListCartsQuery::MAX_PAGE_SIZE, max(1, self::integerQuery($request, 'pageSize', self::DEFAULT_PAGE_SIZE)));
-            $status = self::integerQuery($request, 'status', 0);
+            // Absent is null, not 0. Standing for "not given" with a number the
+            // caller can also send made `?status=0` - a value the operation
+            // documents as a 400 - widen the answer to every cart instead of
+            // being refused: the one reading of a malformed filter that returns
+            // more than the valid ones do.
+            $status = self::optionalIntegerQuery($request, 'status');
 
-            // 0 stands for "not given"; anything else has to be a status a cart has.
-            if (0 !== $status && !\in_array($status, [CartStatus::PENDING, CartStatus::PAID, CartStatus::DELIVERED, CartStatus::CANCELED], true)) {
+            if (null !== $status && !\in_array($status, [CartStatus::PENDING, CartStatus::PAID, CartStatus::DELIVERED, CartStatus::CANCELED], true)) {
                 throw new BadRequestHttpException('The query parameter "status" must be 1 (pending), 2 (paid), 3 (delivered) or 4 (canceled).');
             }
 
             $carts = $this->commandBus->handle(
-                new ListCartsQuery($this->customer->idOrNull(), $pageNumber, $pageSize, 0 === $status ? null : $status),
+                new ListCartsQuery($this->customer->idOrNull(), $pageNumber, $pageSize, $status),
             );
 
             return new JsonResponse($carts);
@@ -52,10 +56,19 @@ final class ListCartsController
 
     private static function integerQuery(Request $request, string $name, int $default): int
     {
+        return self::optionalIntegerQuery($request, $name) ?? $default;
+    }
+
+    /**
+     * The parameter as an integer, or null when it was not given at all - which
+     * is a different thing from any number it could have been given as.
+     */
+    private static function optionalIntegerQuery(Request $request, string $name): ?int
+    {
         $value = $request->query->get($name);
 
         if (null === $value || '' === $value) {
-            return $default;
+            return null;
         }
 
         if (1 !== preg_match('/^-?\d{1,9}$/', $value)) {

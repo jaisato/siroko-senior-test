@@ -146,7 +146,14 @@ final class DoctrineCartRepository implements CartRepository
             ->from(Cart::class, 'c');
 
         if (null !== $owner) {
-            $qb->andWhere('c.customerId = :owner')->setParameter('owner', $owner, CustomerIdType::NAME);
+            // The same predicate Cart::isAccessibleBy() applies: a cart with no
+            // owner - one opened before API_TOKENS was set - belongs to nobody
+            // and is every authenticated caller's to read and to operate on.
+            // Equality alone left those carts out of the listing and out of its
+            // total, so the one place a client discovers a cart it may use did
+            // not name the carts the rest of the API hands it.
+            $qb->andWhere($qb->expr()->orX('c.customerId = :owner', 'c.customerId IS NULL'))
+                ->setParameter('owner', $owner, CustomerIdType::NAME);
         }
 
         if (null !== $status) {
