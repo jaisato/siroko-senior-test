@@ -86,6 +86,49 @@ final class UpgradeGatesTest extends TestCase
         $migration->preUp(new Schema());
     }
 
+    /**
+     * And both gates name a way out that can be taken at this point.
+     *
+     * They said "PATCH /v1/products/{id}", an endpoint that ships with the
+     * version being deployed - so the running application does not have it -
+     * and whose own query reads `product.deleted_at`, a column
+     * Version20260906140000 has not added yet, so the new application cannot
+     * serve it here either. This is the first migration of the series: nothing
+     * in either version can reach these rows, and a legacy code blocked the
+     * deployment with nothing to do about it.
+     */
+    public function test_both_code_gates_name_a_way_out_that_does_not_need_the_api(): void
+    {
+        foreach ([[['K3 (0b6d…, 7f2a…)']], [[], ['ABC/123 (0b6d…)']]] as $answers) {
+            $asked = [];
+            $migration = new Version20260905120000($this->connection($asked, $answers), new NullLogger());
+
+            try {
+                $migration->preUp(new Schema());
+                self::fail('expected the gate to stop the migration');
+            } catch (AbortMigration $stopped) {
+                $recipe = $stopped->getMessage();
+
+                // The read endpoint is still named, because it is why these
+                // codes are a problem; what is gone is the *remedy* that
+                // pointed at one, which nothing here could have called.
+                self::assertStringNotContainsString('PATCH /v1/products/', $recipe, 'no endpoint clears this');
+                self::assertStringContainsString('UPDATE product SET code =', $recipe);
+                // By id: a code two rows share addresses neither of them, which
+                // is the whole of the first gate.
+                self::assertStringContainsString("WHERE id = UUID_TO_BIN('<id>');", $recipe);
+                self::assertStringContainsString('utf8mb4_bin', $recipe, 'the new code has to be free after the change');
+            }
+        }
+
+        // And the ids are in the report, or the recipe has nothing to address.
+        $asked = [];
+        new Version20260905120000($this->connection($asked, [[], []]), new NullLogger())->preUp(new Schema());
+        foreach ($asked as $question) {
+            self::assertStringContainsString('BIN_TO_UUID(id)', $question['sql']);
+        }
+    }
+
     public function test_the_addressability_check_looks_for_slashes_and_control_characters(): void
     {
         $asked = [];
@@ -263,11 +306,17 @@ final class UpgradeGatesTest extends TestCase
                 // A line is still one row here - `quantity` is the column this
                 // very migration adds - so the units are counted, not summed.
                 self::assertStringContainsString('COUNT(*) AS units', $recipe);
-                // And the two statements are one unit of work: the increment
-                // gives the units back, the status change is what stops a retry
+                // And the statements are one unit of work: the increment gives
+                // the units back, the status change is what stops a retry
                 // giving them back again.
                 self::assertStringContainsString('START TRANSACTION;', $recipe);
                 self::assertStringContainsString('COMMIT;', $recipe);
+                // The credit carries the pending condition itself, so a recipe
+                // run twice - which is what an operator whose COMMIT did not
+                // answer has to do - credits once. It is also what stops a
+                // checkout that got in first having its units given back.
+                self::assertStringContainsString('AND c.status = ' . CartStatus::PENDING, $recipe);
+                self::assertStringContainsString('FOR UPDATE;', $recipe, 'the cart is locked before either write');
             }
         }
     }
@@ -337,6 +386,12 @@ final class UpgradeGatesTest extends TestCase
                 $recipe,
                 'a pending cart is still holding its units',
             );
+            // And only a pending one: the condition is in the statement rather
+            // than in a note to the reader, so a settled cart is not credited
+            // and a checkout that gets in first does not have its units given
+            // back underneath it.
+            self::assertStringContainsString('JOIN cart c ON c.id = i.cart_id', $recipe);
+            self::assertStringContainsString('AND c.status = ' . CartStatus::PENDING, $recipe);
             // The lines are the only record a legacy cart has: `orders` is
             // created empty by this same series, even for carts already paid,
             // so there is nothing there to reconcile one against.
