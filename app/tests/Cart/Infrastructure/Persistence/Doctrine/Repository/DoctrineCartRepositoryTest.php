@@ -158,9 +158,8 @@ final class DoctrineCartRepositoryTest extends KernelTestCase
         $paid->addProduct(ItemId::fromString(Uuid::uuid4()->toString()), $product, new Quantity(1));
         $paid->pay();
         $bobs = new Cart($this->repository->nextIdentity(), CartStatus::pending(), $now, null, CustomerId::fromString('bob'));
-        $ownerless = new Cart($this->repository->nextIdentity(), CartStatus::pending(), $now);
 
-        foreach ([$old, $recent, $paid, $bobs, $ownerless] as $cart) {
+        foreach ([$old, $recent, $paid, $bobs] as $cart) {
             $this->repository->save($cart);
         }
 
@@ -171,9 +170,45 @@ final class DoctrineCartRepositoryTest extends KernelTestCase
         self::assertSame([$recent->id()->toString(), $old->id()->toString()], $ids($this->repository->search($alice, CartStatus::pending(), 1, 10)));
         self::assertSame([$paid->id()->toString()], $ids($this->repository->search($alice, CartStatus::paid(), 1, 10)));
         self::assertSame([$old->id()->toString()], $ids($this->repository->search($alice, null, 3, 1)), 'pages follow the order');
-        self::assertSame(5, $this->repository->countMatching(null, null), 'no owner: every cart');
-        self::assertCount(5, $this->repository->search(null, null, 1, 10));
+        self::assertSame(4, $this->repository->countMatching(null, null), 'no owner: every cart');
+        self::assertCount(4, $this->repository->search(null, null, 1, 10));
         self::assertSame(0, $this->repository->countMatching(CustomerId::fromString('carol'), null));
+    }
+
+    /**
+     * A cart opened before API_TOKENS was set has no owner, and
+     * Cart::isAccessibleBy() hands it to whoever asks: GET, add, checkout all
+     * work on it. The listing filtered on equality alone, so those carts were
+     * in none of them and in no total either - the one place a client finds out
+     * which carts it may use did not name the carts the API lets it use.
+     */
+    public function test_a_cart_with_no_owner_is_listed_for_every_caller(): void
+    {
+        $now = new \DateTimeImmutable('2026-09-06 10:00:00', new \DateTimeZone('UTC'));
+        $alice = CustomerId::fromString('alice');
+
+        $hers = new Cart($this->repository->nextIdentity(), CartStatus::pending(), $now->modify('-1 hour'), null, $alice);
+        $legacy = new Cart($this->repository->nextIdentity(), CartStatus::pending(), $now);
+        $bobs = new Cart($this->repository->nextIdentity(), CartStatus::pending(), $now->modify('-2 hours'), null, CustomerId::fromString('bob'));
+
+        foreach ([$hers, $legacy, $bobs] as $cart) {
+            $this->repository->save($cart);
+        }
+
+        $ids = static fn(array $carts): array => array_map(static fn(Cart $cart): string => $cart->id()->toString(), $carts);
+
+        self::assertSame(
+            [$legacy->id()->toString(), $hers->id()->toString()],
+            $ids($this->repository->search($alice, null, 1, 10)),
+            "the ownerless cart is hers to use, and bob's is not hers to see",
+        );
+        self::assertSame(2, $this->repository->countMatching($alice, null), 'and the total counts it too');
+        // Ownerless means nobody's, not "the first caller's": carol owns no
+        // cart at all and still gets the one the API would let her check out.
+        self::assertSame([$legacy->id()->toString()], $ids($this->repository->search(CustomerId::fromString('carol'), null, 1, 10)));
+        // The status filter still narrows within that set.
+        self::assertSame(2, $this->repository->countMatching($alice, CartStatus::pending()));
+        self::assertSame(0, $this->repository->countMatching($alice, CartStatus::paid()));
     }
 
     /**

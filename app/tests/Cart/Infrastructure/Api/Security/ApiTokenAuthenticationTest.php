@@ -115,18 +115,29 @@ final class ApiTokenAuthenticationTest extends ApiTestCase
         $this->assertProblem(404, 'Order');
     }
 
-    public function test_the_list_shows_the_callers_carts_only(): void
+    /**
+     * Hers and the ownerless ones - the carts the rest of the API lets her
+     * read and check out - and not bob's. Listing on ownership equality alone
+     * left the ownerless ones out, so the one call a client makes to find out
+     * which carts it may use disagreed with every call that uses them.
+     */
+    public function test_the_list_shows_the_carts_the_caller_may_use(): void
     {
         $product = $this->persistProduct();
         $alices = $this->persistCartWithLines(CartStatus::PENDING, [[$product, 1]], null, 'alice');
         $this->persistCartWithLines(CartStatus::PENDING, [[$product, 1]], null, 'bob');
-        $this->persistCartWithLines(CartStatus::PENDING, [[$product, 1]]);
+        $ownerless = $this->persistCartWithLines(CartStatus::PENDING, [[$product, 1]]);
 
         $this->request('GET', $this->url('api_list_carts'), server: self::alice());
 
         $body = $this->json();
-        self::assertSame([$alices->id()->toString()], array_column($body['carts'], 'id'));
-        self::assertSame(1, $body['total']);
+        $listed = array_column($body['carts'], 'id');
+        sort($listed);
+        $expected = [$alices->id()->toString(), $ownerless->id()->toString()];
+        sort($expected);
+
+        self::assertSame($expected, $listed);
+        self::assertSame(2, $body['total']);
     }
 
     /** Carts that predate authentication belong to nobody and stay reachable by id. */

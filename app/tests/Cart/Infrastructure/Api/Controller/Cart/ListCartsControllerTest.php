@@ -69,4 +69,29 @@ final class ListCartsControllerTest extends ApiTestCase
         $this->request('GET', $this->url('api_list_carts', ['status' => 'paid']));
         $this->assertProblem(400, '"status" must be an integer');
     }
+
+    /**
+     * 0 was the sentinel for "no filter given", so sending it read as sending
+     * nothing: a value the operation documents as a 400 came back with every
+     * cart instead. Of all the answers to a malformed filter, the widest.
+     */
+    public function test_an_explicit_zero_status_is_a_400_and_not_the_whole_catalogue(): void
+    {
+        $this->request('GET', $this->url('api_list_carts', ['status' => 0]));
+        $this->assertProblem(400, '"status" must be');
+
+        $this->request('GET', $this->url('api_list_carts', ['status' => -1]));
+        $this->assertProblem(400, '"status" must be');
+    }
+
+    /** Absent is still absent, and an empty value is still absent. */
+    public function test_no_status_filters_nothing(): void
+    {
+        $this->request('GET', $this->url('api_list_carts'));
+        $withoutIt = $this->json();
+
+        $this->request('GET', $this->url('api_list_carts', ['status' => '']));
+
+        self::assertSame($withoutIt, $this->json());
+    }
 }
