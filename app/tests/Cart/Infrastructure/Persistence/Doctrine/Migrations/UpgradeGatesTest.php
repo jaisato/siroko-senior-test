@@ -123,7 +123,7 @@ final class UpgradeGatesTest extends TestCase
 
         // And the ids are in the report, or the recipe has nothing to address.
         $asked = [];
-        new Version20260905120000($this->connection($asked, [[], []]), new NullLogger())->preUp(new Schema());
+        (new Version20260905120000($this->connection($asked, [[], []]), new NullLogger()))->preUp(new Schema());
         foreach ($asked as $question) {
             self::assertStringContainsString('BIN_TO_UUID(id)', $question['sql']);
         }
