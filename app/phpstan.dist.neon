@@ -8,6 +8,11 @@ includes:
 
 parameters:
     level: 8
+    # The oldest PHP composer.json accepts, not the one this machine happens to
+    # run. `new Foo()->bar()` parses on 8.4 and is a syntax error on 8.3, so a
+    # contributor on the newer runtime wrote one, every local gate passed, and
+    # CI's 8.3 job was the first thing to see it.
+    phpVersion: 80300
     paths:
         - src
         - tests
