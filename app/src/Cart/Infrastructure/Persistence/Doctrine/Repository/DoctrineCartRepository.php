@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Siroko\Cart\Infrastructure\Persistence\Doctrine\Repository;
 
 use Doctrine\DBAL\ArrayParameterType;
-use Doctrine\DBAL\LockMode;
 use Doctrine\DBAL\Types\Type;
 use Doctrine\DBAL\Types\Types;
 use Doctrine\ORM\EntityManagerInterface;
@@ -27,6 +26,8 @@ use Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\ProductIdType;
 
 final class DoctrineCartRepository implements CartRepository
 {
+    use LocksRows;
+
     public function __construct(
         private readonly EntityManagerInterface $em,
     ) {}
@@ -57,14 +58,14 @@ final class DoctrineCartRepository implements CartRepository
 
     public function ofIdForUpdate(CartId $id): ?Cart
     {
-        $cart = $this->em->createQueryBuilder()
-            ->select('c')
-            ->from(Cart::class, 'c')
-            ->where('c.id = :id')
-            ->setParameter('id', $id, CartIdType::NAME)
-            ->getQuery()
-            ->setLockMode(LockMode::PESSIMISTIC_WRITE)
-            ->getOneOrNullResult();
+        $cart = $this->forUpdate(
+            $this->em->createQueryBuilder()
+                ->select('c')
+                ->from(Cart::class, 'c')
+                ->where('c.id = :id')
+                ->setParameter('id', $id, CartIdType::NAME)
+                ->getQuery(),
+        )->getOneOrNullResult();
 
         return $cart instanceof Cart ? $cart : null;
     }

@@ -232,6 +232,45 @@ final class DoctrineProductRepositoryTest extends KernelTestCase
         self::assertTrue($product->id()->equals($locked->id()));
     }
 
+    /**
+     * And it reads the row it locked, not the copy loaded before the lock.
+     *
+     * Doctrine hands back whatever the identity map already holds for an id
+     * and drops the row the query just read, so the lock protected a copy of
+     * the state it was taken to rule out. The handlers all read before the
+     * transaction - a request for a product that is not there is a 404 that
+     * costs no lock - so the stale copy was the normal case, not a corner:
+     * an add validated a currency against the price from before a reprice
+     * that had already committed, and put a line in a cart no later read can
+     * add up.
+     */
+    public function test_a_locked_read_sees_the_row_not_the_copy_already_loaded(): void
+    {
+        $product = $this->product('Culotte', 'K9', '89.00', 7);
+        $this->em->clear();
+
+        // Loaded first, exactly as the fast 404 does, and now managed.
+        $before = $this->repository->ofId($product->id());
+        self::assertInstanceOf(Product::class, $before);
+
+        // Another transaction repriced it into another currency and moved
+        // stock. Here it is one statement on the same connection; what matters
+        // is that the row and the managed copy no longer agree.
+        $this->em->getConnection()->executeStatement(
+            'UPDATE product SET price_amount = :amount, price_currency = :currency, quantity = :quantity WHERE id = :id',
+            ['amount' => '99.0000', 'currency' => 'USD', 'quantity' => 3, 'id' => $product->id()],
+            ['id' => 'product_id'],
+        );
+
+        $locked = $this->em->wrapInTransaction(fn() => $this->repository->ofIdForUpdate($product->id()));
+
+        self::assertInstanceOf(Product::class, $locked);
+        self::assertSame($before, $locked, 'the identity map still owns the instance; only its state is refreshed');
+        self::assertSame('USD', $locked->price()->currency()->getCurrencyCode());
+        self::assertSame('99.00', $locked->price()->amount());
+        self::assertSame(3, $locked->quantity()->asInt());
+    }
+
     /** A withdrawn product keeps its row but is invisible to every catalogue read. */
     public function test_a_withdrawn_product_is_not_found_by_id_code_or_listing_but_its_row_stays(): void
     {

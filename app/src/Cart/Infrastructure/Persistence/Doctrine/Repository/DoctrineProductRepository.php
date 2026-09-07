@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Siroko\Cart\Infrastructure\Persistence\Doctrine\Repository;
 
 use Doctrine\DBAL\ArrayParameterType;
-use Doctrine\DBAL\LockMode;
 use Doctrine\DBAL\ParameterType;
 use Doctrine\DBAL\Types\Types;
 use Doctrine\ORM\EntityManagerInterface;
@@ -24,6 +23,8 @@ use Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\ProductIdType;
 
 final class DoctrineProductRepository implements ProductRepository
 {
+    use LocksRows;
+
     /**
      * The cart states whose units come back to the product if the cart is
      * called off - which is what `Cart::cancel()` accepts, and what
@@ -396,12 +397,12 @@ final class DoctrineProductRepository implements ProductRepository
 
     public function ofIdForUpdate(ProductId $id): ?Product
     {
-        $product = $this->inCatalogue()
-            ->andWhere('p.id = :id')
-            ->setParameter('id', $id, ProductIdType::NAME)
-            ->getQuery()
-            ->setLockMode(LockMode::PESSIMISTIC_WRITE)
-            ->getOneOrNullResult();
+        $product = $this->forUpdate(
+            $this->inCatalogue()
+                ->andWhere('p.id = :id')
+                ->setParameter('id', $id, ProductIdType::NAME)
+                ->getQuery(),
+        )->getOneOrNullResult();
 
         return $product instanceof Product ? $product : null;
     }
