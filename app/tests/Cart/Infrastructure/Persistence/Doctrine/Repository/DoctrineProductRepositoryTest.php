@@ -299,7 +299,7 @@ final class DoctrineProductRepositoryTest extends KernelTestCase
     public function test_a_recount_leaves_room_for_the_units_pending_carts_hold(): void
     {
         $product = $this->product(stock: 5);
-        $this->holdInAPendingCart($product, 3);
+        $this->holdInACart($product, 3);
 
         try {
             $this->repository->setStock($product->id(), new Quantity(Quantity::MAX_QUANTITY));
@@ -317,13 +317,61 @@ final class DoctrineProductRepositoryTest extends KernelTestCase
         self::assertSame(Quantity::MAX_QUANTITY, $this->stockInDatabase($product));
     }
 
-    /** A pending cart holding `$units` of the product, as adding a line leaves it. */
-    private function holdInAPendingCart(Product $product, int $units): void
+    /**
+     * A paid cart holds units too, and the ceiling has to leave room for them.
+     *
+     * `Cart::cancel()` takes a paid cart - that is what a refund is - and
+     * `CartCancellation` returns the units of whatever it cancels. Counting
+     * only the pending carts left those outside the ceiling: a recount to the
+     * maximum passed, and calling the paid cart off afterwards was refused with
+     * nowhere to put its units, taking the cancellation down with it.
+     */
+    public function test_a_recount_leaves_room_for_the_units_a_paid_cart_holds(): void
+    {
+        $product = $this->product(stock: 5);
+        $this->holdInACart($product, 4, paid: true);
+
+        try {
+            $this->repository->setStock($product->id(), new Quantity(Quantity::MAX_QUANTITY));
+            self::fail('a paid cart is one cancellation away from wanting its units back');
+        } catch (InvalidStockAdjustmentException $refused) {
+            self::assertStringContainsString('4 unit(s)', $refused->getMessage());
+        }
+
+        self::assertSame(5, $this->stockInDatabase($product));
+
+        self::assertTrue($this->repository->setStock($product->id(), new Quantity(Quantity::MAX_QUANTITY - 4)));
+        $this->repository->returnStock($product->id(), 4);
+
+        self::assertSame(Quantity::MAX_QUANTITY, $this->stockInDatabase($product));
+    }
+
+    /** A cart nothing will ever give back does not reserve any headroom. */
+    public function test_a_delivered_cart_does_not_hold_units_back(): void
+    {
+        $product = $this->product(stock: 5);
+        $this->holdInACart($product, 3, paid: true, delivered: true);
+
+        self::assertTrue($this->repository->setStock($product->id(), new Quantity(Quantity::MAX_QUANTITY)));
+        self::assertSame(Quantity::MAX_QUANTITY, $this->stockInDatabase($product));
+    }
+
+    /** A cart holding `$units` of the product, as adding a line leaves it. */
+    private function holdInACart(Product $product, int $units, bool $paid = false, bool $delivered = false): void
     {
         $carts = self::getContainer()->get(CartRepository::class);
 
         $cart = new Cart($carts->nextIdentity(), CartStatus::pending());
         $cart->addItem(new CartItem(ItemId::fromString(Uuid::uuid4()->toString()), $product, new Quantity($units)));
+
+        if ($paid) {
+            $cart->pay();
+        }
+
+        if ($delivered) {
+            $cart->deliver();
+        }
+
         $carts->save($cart);
     }
 
