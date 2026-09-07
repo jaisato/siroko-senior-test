@@ -6,6 +6,7 @@ namespace Siroko\Tests\Cart\Infrastructure\Persistence\Doctrine\Repository;
 
 use Doctrine\DBAL\Exception\UniqueConstraintViolationException;
 use Doctrine\ORM\EntityManagerInterface;
+use Doctrine\ORM\PersistentCollection;
 use Ramsey\Uuid\Uuid;
 use Siroko\Cart\Domain\Entity\Cart;
 use Siroko\Cart\Domain\Entity\CartItem;
@@ -205,6 +206,56 @@ final class DoctrineCartRepositoryTest extends KernelTestCase
     public function test_an_unknown_cart_is_null(): void
     {
         self::assertNull($this->repository->ofId($this->repository->nextIdentity()));
+    }
+
+    /**
+     * A page arrives with its lines and products already loaded.
+     *
+     * `CartRead::fromModel()` walks every line of every cart and every line's
+     * product. With only the carts loaded, that walk is where the queries
+     * happen - one per cart for the EXTRA_LAZY collection, one per product for
+     * the LAZY association - so a full page of a hundred carts with fifty
+     * products each was thousands of round trips and timed out. Nothing about
+     * the answer was wrong, which is why only this can catch it.
+     *
+     * Asserted on the hydration state rather than on a query count because the
+     * suite runs under dama/doctrine-test-bundle, whose static connection is
+     * not the one Doctrine's profiling middleware wraps: no counter here sees
+     * anything. An initialised collection and a loaded product are the property
+     * the count would be evidence for - neither can issue a query when the
+     * reading touches it. `isInitialized()` is read before the collection is
+     * iterated, because iterating is what would load it.
+     */
+    public function test_a_page_of_carts_arrives_with_its_lines_and_products_loaded(): void
+    {
+        $now = new \DateTimeImmutable('2026-09-06 10:00:00', new \DateTimeZone('UTC'));
+
+        for ($i = 0; $i < 3; ++$i) {
+            $cart = new Cart($this->repository->nextIdentity(), CartStatus::pending(), $now->modify("-{$i} hours"));
+            $cart->addProduct(ItemId::fromString(Uuid::uuid4()->toString()), $this->product(), new Quantity(1));
+            $cart->addProduct(ItemId::fromString(Uuid::uuid4()->toString()), $this->product(), new Quantity(2));
+            $this->repository->save($cart);
+        }
+
+        $this->em->clear();
+
+        $carts = $this->repository->search(null, null, 1, 10);
+        $unitOfWork = $this->em->getUnitOfWork();
+
+        $lines = 0;
+        foreach ($carts as $cart) {
+            $items = $cart->items();
+            self::assertInstanceOf(PersistentCollection::class, $items);
+            self::assertTrue($items->isInitialized(), 'the lines came with the page');
+
+            foreach ($items as $line) {
+                self::assertFalse($unitOfWork->isUninitializedObject($line->getProduct()), 'and so did their products');
+                ++$lines;
+            }
+        }
+
+        self::assertCount(3, $carts);
+        self::assertSame(6, $lines);
     }
 
     private function cartExpiring(\DateTimeImmutable $deadline, Product $product): Cart

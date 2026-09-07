@@ -14,6 +14,7 @@ use Siroko\Cart\Domain\Entity\Product;
 use Siroko\Cart\Domain\Exception\InvalidStockAdjustmentException;
 use Siroko\Cart\Domain\Repository\ProductCriteria;
 use Siroko\Cart\Domain\Repository\ProductRepository;
+use Siroko\Cart\Domain\ValueObject\CartStatus;
 use Siroko\Cart\Domain\ValueObject\ProductCode;
 use Siroko\Cart\Domain\ValueObject\ProductId;
 use Siroko\Cart\Domain\ValueObject\Quantity;
@@ -157,18 +158,85 @@ final class DoctrineProductRepository implements ProductRepository
     public function setStock(ProductId $id, Quantity $quantity): bool
     {
         $affected = $this->em->getConnection()->executeStatement(
-            'UPDATE product SET quantity = :quantity WHERE id = :id AND deleted_at IS NULL',
-            ['quantity' => $quantity->asInt(), 'id' => $id],
-            ['quantity' => ParameterType::INTEGER, 'id' => ProductIdType::NAME],
+            <<<'SQL'
+                UPDATE product
+                   SET quantity = :quantity
+                 WHERE id = :id
+                   AND deleted_at IS NULL
+                   AND :quantity <= :max - COALESCE((
+                           SELECT SUM(i.quantity)
+                             FROM cart_item i
+                             JOIN cart c ON c.id = i.cart_id
+                            WHERE i.product_id = product.id AND c.status = :pending
+                       ), 0)
+                SQL,
+            ['quantity' => $quantity->asInt(), 'id' => $id, 'max' => Quantity::MAX_QUANTITY, 'pending' => CartStatus::PENDING],
+            [
+                'quantity' => ParameterType::INTEGER,
+                'id' => ProductIdType::NAME,
+                'max' => ParameterType::INTEGER,
+                'pending' => ParameterType::INTEGER,
+            ],
         );
 
-        if (1 !== $affected && !$this->isInCatalogue($id)) {
+        if (1 === $affected) {
+            $this->refreshIfManaged($id);
+
+            return true;
+        }
+
+        if (!$this->isInCatalogue($id)) {
             return false;
         }
+
+        // In the catalogue and nothing changed: either the figure is the one
+        // the column already holds - the most ordinary recount there is - or it
+        // is one the condition above refused.
+        $this->refuseIfItLeavesNoRoomForHeldUnits($id, $quantity);
 
         $this->refreshIfManaged($id);
 
         return true;
+    }
+
+    /**
+     * A recount says what is *available*. The units pending carts are holding
+     * are on top of it, and they come back to this column when a line is
+     * removed or the cart is abandoned.
+     *
+     * Recounted to the maximum with holds outstanding, that return had nowhere
+     * to go: returnStock() refused it - rightly, since `quantity` is an INT and
+     * silence would lose inventory - the cart transition rolled back with it,
+     * and `cart:release-expired` met the same cart on every run and stopped
+     * there. So the ceiling belongs to the product, not to the column: what is
+     * available plus what is held has to fit under it.
+     *
+     * @throws InvalidStockAdjustmentException
+     */
+    private function refuseIfItLeavesNoRoomForHeldUnits(ProductId $id, Quantity $quantity): void
+    {
+        $held = $this->unitsHeldInPendingCarts($id);
+
+        if ($quantity->asInt() > Quantity::MAX_QUANTITY - $held) {
+            throw InvalidStockAdjustmentException::leavesNoRoomForHeldUnits($held, Quantity::MAX_QUANTITY);
+        }
+    }
+
+    /** Units of this product that pending carts have reserved. */
+    private function unitsHeldInPendingCarts(ProductId $id): int
+    {
+        $held = $this->em->getConnection()->fetchOne(
+            <<<'SQL'
+                SELECT COALESCE(SUM(i.quantity), 0)
+                  FROM cart_item i
+                  JOIN cart c ON c.id = i.cart_id
+                 WHERE i.product_id = :id AND c.status = :pending
+                SQL,
+            ['id' => $id, 'pending' => CartStatus::PENDING],
+            ['id' => ProductIdType::NAME, 'pending' => ParameterType::INTEGER],
+        );
+
+        return is_numeric($held) ? (int) $held : 0;
     }
 
     /**

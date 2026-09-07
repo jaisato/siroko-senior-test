@@ -7,10 +7,15 @@ namespace Siroko\Tests\Cart\Infrastructure\Persistence\Doctrine\Repository;
 use Doctrine\DBAL\Exception\UniqueConstraintViolationException;
 use Doctrine\ORM\EntityManagerInterface;
 use Ramsey\Uuid\Uuid;
+use Siroko\Cart\Domain\Entity\Cart;
+use Siroko\Cart\Domain\Entity\CartItem;
 use Siroko\Cart\Domain\Entity\Product;
 use Siroko\Cart\Domain\Exception\InvalidStockAdjustmentException;
+use Siroko\Cart\Domain\Repository\CartRepository;
 use Siroko\Cart\Domain\Repository\ProductCriteria;
 use Siroko\Cart\Domain\Repository\ProductRepository;
+use Siroko\Cart\Domain\ValueObject\CartStatus;
+use Siroko\Cart\Domain\ValueObject\ItemId;
 use Siroko\Cart\Domain\ValueObject\Name;
 use Siroko\Cart\Domain\ValueObject\Price;
 use Siroko\Cart\Domain\ValueObject\ProductCode;
@@ -281,6 +286,45 @@ final class DoctrineProductRepositoryTest extends KernelTestCase
         self::assertTrue($this->repository->setStock($product->id(), new Quantity(7)));
 
         self::assertSame(7, $this->stockInDatabase($product));
+    }
+
+    /**
+     * A recount says what is *available*; the units pending carts hold are on
+     * top of it, and they come back to this column when a line is removed or
+     * the cart is abandoned. Recounted to the maximum with holds outstanding,
+     * that return had nowhere to go: returnStock() refused it, the cart
+     * transition rolled back with it, and `cart:release-expired` met the same
+     * cart on every run and stopped there.
+     */
+    public function test_a_recount_leaves_room_for_the_units_pending_carts_hold(): void
+    {
+        $product = $this->product(stock: 5);
+        $this->holdInAPendingCart($product, 3);
+
+        try {
+            $this->repository->setStock($product->id(), new Quantity(Quantity::MAX_QUANTITY));
+            self::fail('a recount that leaves the held units nowhere to land must be refused');
+        } catch (InvalidStockAdjustmentException $refused) {
+            self::assertStringContainsString('3 unit(s)', $refused->getMessage());
+        }
+
+        self::assertSame(5, $this->stockInDatabase($product), 'and the column is untouched');
+
+        // The most it can be recounted to, and returning the held units still fits.
+        self::assertTrue($this->repository->setStock($product->id(), new Quantity(Quantity::MAX_QUANTITY - 3)));
+        $this->repository->returnStock($product->id(), 3);
+
+        self::assertSame(Quantity::MAX_QUANTITY, $this->stockInDatabase($product));
+    }
+
+    /** A pending cart holding `$units` of the product, as adding a line leaves it. */
+    private function holdInAPendingCart(Product $product, int $units): void
+    {
+        $carts = self::getContainer()->get(CartRepository::class);
+
+        $cart = new Cart($carts->nextIdentity(), CartStatus::pending());
+        $cart->addItem(new CartItem(ItemId::fromString(Uuid::uuid4()->toString()), $product, new Quantity($units)));
+        $carts->save($cart);
     }
 
     /**
