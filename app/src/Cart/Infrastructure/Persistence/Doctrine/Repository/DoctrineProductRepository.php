@@ -7,6 +7,7 @@ namespace Siroko\Cart\Infrastructure\Persistence\Doctrine\Repository;
 use Doctrine\DBAL\ArrayParameterType;
 use Doctrine\DBAL\LockMode;
 use Doctrine\DBAL\ParameterType;
+use Doctrine\DBAL\Platforms\AbstractMySQLPlatform;
 use Doctrine\DBAL\Types\Types;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\QueryBuilder;
@@ -103,7 +104,7 @@ final class DoctrineProductRepository implements ProductRepository
         $this->refreshIfManaged($id);
     }
 
-    public function addStock(ProductId $id, int $units): void
+    public function addStock(ProductId $id, int $units, int $heldUnits): void
     {
         $this->guardUnits($units);
 
@@ -115,24 +116,20 @@ final class DoctrineProductRepository implements ProductRepository
         // máximo con un carrito reteniendo una pasaba, y cancelar ese carrito
         // después se quedaba sin sitio donde devolver la suya y tiraba abajo la
         // cancelación entera.
+        //
+        // Lo retenido llega como número, no como subconsulta. Leerlo aquí
+        // dentro habría sido leer -y bloquear- filas de carrito con la del
+        // producto ya tomada, que es el orden contrario al que toma una
+        // cancelación: las dos transacciones se esperaban la una a la otra,
+        // MySQL mataba una y el bus de escritura no reintenta.
         $applied = $this->em->getConnection()->executeStatement(
-            <<<'SQL'
-                UPDATE product
-                   SET quantity = quantity + :units
-                 WHERE id = :id
-                   AND quantity <= :max - :units - COALESCE((
-                           SELECT SUM(i.quantity)
-                             FROM cart_item i
-                             JOIN cart c ON c.id = i.cart_id
-                            WHERE i.product_id = product.id AND c.status IN (:refundable)
-                       ), 0)
-                SQL,
-            ['units' => $units, 'id' => $id, 'max' => Quantity::MAX_QUANTITY, 'refundable' => self::REFUNDABLE_STATUSES],
+            'UPDATE product SET quantity = quantity + :units WHERE id = :id AND quantity <= :max - :units - :held',
+            ['units' => $units, 'id' => $id, 'max' => Quantity::MAX_QUANTITY, 'held' => $heldUnits],
             [
                 'units' => ParameterType::INTEGER,
                 'id' => ProductIdType::NAME,
                 'max' => ParameterType::INTEGER,
-                'refundable' => ArrayParameterType::INTEGER,
+                'held' => ParameterType::INTEGER,
             ],
         );
 
@@ -144,7 +141,7 @@ final class DoctrineProductRepository implements ProductRepository
             // que sí hay que decir en voz alta, y por cuál de los dos techos.
             if (null !== $current) {
                 $this->refuseIfItWouldOverflow($id, $units);
-                $this->refuseIfItLeavesNoRoomForHeldUnits($id, $current + $units);
+                $this->refuseIfItLeavesNoRoomForHeldUnits($current + $units, $heldUnits);
             }
         }
 
@@ -225,28 +222,22 @@ final class DoctrineProductRepository implements ProductRepository
      * answered 404 for a product sitting right there. SQLite counts the rows
      * the statement touched, so the local suite never saw it. Asking whether
      * the row is in the catalogue settles it the same way on both.
+     *
+     * What refundable carts hold arrives as a number for the reason addStock()
+     * spells out: reading it here would lock cart rows with this product's own
+     * row already taken, the opposite order from a cancellation, and the two
+     * deadlocked.
      */
-    public function setStock(ProductId $id, Quantity $quantity): bool
+    public function setStock(ProductId $id, Quantity $quantity, int $heldUnits): bool
     {
         $affected = $this->em->getConnection()->executeStatement(
-            <<<'SQL'
-                UPDATE product
-                   SET quantity = :quantity
-                 WHERE id = :id
-                   AND deleted_at IS NULL
-                   AND :quantity <= :max - COALESCE((
-                           SELECT SUM(i.quantity)
-                             FROM cart_item i
-                             JOIN cart c ON c.id = i.cart_id
-                            WHERE i.product_id = product.id AND c.status IN (:refundable)
-                       ), 0)
-                SQL,
-            ['quantity' => $quantity->asInt(), 'id' => $id, 'max' => Quantity::MAX_QUANTITY, 'refundable' => self::REFUNDABLE_STATUSES],
+            'UPDATE product SET quantity = :quantity WHERE id = :id AND deleted_at IS NULL AND :quantity <= :max - :held',
+            ['quantity' => $quantity->asInt(), 'id' => $id, 'max' => Quantity::MAX_QUANTITY, 'held' => $heldUnits],
             [
                 'quantity' => ParameterType::INTEGER,
                 'id' => ProductIdType::NAME,
                 'max' => ParameterType::INTEGER,
-                'refundable' => ArrayParameterType::INTEGER,
+                'held' => ParameterType::INTEGER,
             ],
         );
 
@@ -263,7 +254,7 @@ final class DoctrineProductRepository implements ProductRepository
         // In the catalogue and nothing changed: either the figure is the one
         // the column already holds - the most ordinary recount there is - or it
         // is one the condition above refused.
-        $this->refuseIfItLeavesNoRoomForHeldUnits($id, $quantity->asInt());
+        $this->refuseIfItLeavesNoRoomForHeldUnits($quantity->asInt(), $heldUnits);
 
         $this->refreshIfManaged($id);
 
@@ -284,10 +275,8 @@ final class DoctrineProductRepository implements ProductRepository
      *
      * @throws InvalidStockAdjustmentException
      */
-    private function refuseIfItLeavesNoRoomForHeldUnits(ProductId $id, int $available): void
+    private function refuseIfItLeavesNoRoomForHeldUnits(int $available, int $held): void
     {
-        $held = $this->unitsHeldInRefundableCarts($id);
-
         if ($available > Quantity::MAX_QUANTITY - $held) {
             throw InvalidStockAdjustmentException::leavesNoRoomForHeldUnits($held, Quantity::MAX_QUANTITY);
         }
@@ -304,21 +293,49 @@ final class DoctrineProductRepository implements ProductRepository
      * and calling off the paid cart afterwards was refused with nowhere to put
      * them, taking the cancellation down with it. A delivered or already
      * canceled cart credits nothing, so neither is counted.
+     *
+     * A locking read, and the first one the caller makes: it holds the cart
+     * rows -and the gap, so a line added for this product waits- until the
+     * transaction ends, which is what makes the number still true when the
+     * write that uses it runs. Taken here, with nothing else held, it keeps the
+     * order every writer in this application takes: carts, then products.
      */
-    private function unitsHeldInRefundableCarts(ProductId $id): int
+    public function unitsHeldInRefundableCarts(ProductId $id): int
     {
-        $held = $this->em->getConnection()->fetchOne(
-            <<<'SQL'
-                SELECT COALESCE(SUM(i.quantity), 0)
+        // The units come back one per line and are added up here rather than by
+        // SUM(): a locking clause and an aggregate are not a combination every
+        // engine takes (PostgreSQL refuses it outright), and the rows are the
+        // same ones the aggregate would have scanned - the open lines of one
+        // product - so nothing more is read for it.
+        $lines = $this->em->getConnection()->fetchFirstColumn(
+            <<<SQL
+                SELECT i.quantity
                   FROM cart_item i
                   JOIN cart c ON c.id = i.cart_id
-                 WHERE i.product_id = :id AND c.status IN (:refundable)
+                 WHERE i.product_id = :id AND c.status IN (:refundable){$this->readLock()}
                 SQL,
             ['id' => $id, 'refundable' => self::REFUNDABLE_STATUSES],
             ['id' => ProductIdType::NAME, 'refundable' => ArrayParameterType::INTEGER],
         );
 
-        return is_numeric($held) ? (int) $held : 0;
+        return array_sum(array_map(static fn(mixed $units): int => is_numeric($units) ? (int) $units : 0, $lines));
+    }
+
+    /**
+     * The clause that makes a read hold what it read, in the spelling of the
+     * engine underneath.
+     *
+     * Empty where there is nothing to hold: SQLite - the local test profile -
+     * has one writer at a time, so a read cannot be overtaken by a write inside
+     * another transaction. Written out rather than asked of the platform
+     * because `AbstractPlatform::getReadLockSQL()` is deprecated in DBAL 4 and
+     * this project fails on its own deprecations.
+     */
+    private function readLock(): string
+    {
+        return $this->em->getConnection()->getDatabasePlatform() instanceof AbstractMySQLPlatform
+            ? ' FOR SHARE'
+            : '';
     }
 
     /**

@@ -31,6 +31,24 @@ final class AdjustProductStockCommandHandler
     public function __invoke(AdjustProductStockCommand $command): ProductRead
     {
         return $this->session->executeAtomically(function () use ($command): ProductRead {
+            // What refundable carts hold, asked for first and with nothing else
+            // held, because reading it locks cart rows and every writer here
+            // takes carts before products. Read from inside the movement -
+            // after the product's own row was locked - it took the two in the
+            // opposite order from a cancellation, and an adjustment and a
+            // cancellation over the same product waited for each other: MySQL
+            // kills one of the two, and the write bus does not retry, so a
+            // perfectly good request answered 500.
+            //
+            // It is the ceiling every increase has to respect: what is
+            // available plus what is held has to fit under the maximum, so that
+            // calling one of those carts off always has somewhere to put its
+            // units. The number stays true until the movement runs - the read
+            // holds those rows, and a cart operation that changes what is held
+            // moves the available count by the same units the other way, which
+            // writes this product's row.
+            $held = $this->productRepository->unitsHeldInRefundableCarts($command->id());
+
             // Locked, like every other writer that decides something from the
             // row it is about to change. Read without the lock, a withdrawal
             // committing between the read and the movement turned a perfectly
@@ -50,11 +68,11 @@ final class AdjustProductStockCommandHandler
             $quantity = $command->quantity();
 
             if (null !== $quantity) {
-                if (!$this->productRepository->setStock($product->id(), $quantity)) {
+                if (!$this->productRepository->setStock($product->id(), $quantity, $held)) {
                     throw ProductNotFoundException::withId($command->id());
                 }
             } else {
-                $this->applyDelta($product, $command->delta() ?? 0);
+                $this->applyDelta($product, $command->delta() ?? 0, $held);
             }
 
             return ProductRead::fromModel($product);
@@ -64,7 +82,7 @@ final class AdjustProductStockCommandHandler
     /**
      * @throws OutOfStockException
      */
-    private function applyDelta(Product $product, int $delta): void
+    private function applyDelta(Product $product, int $delta, int $held): void
     {
         if ($delta > 0) {
             // addStock, not returnStock: these units were never held by
@@ -75,7 +93,7 @@ final class AdjustProductStockCommandHandler
             // `{"delta":1}` fill the last slot a pending or paid cart was going
             // to need, after which cancelling that cart had nowhere to put its
             // unit and rolled back.
-            $this->productRepository->addStock($product->id(), $delta);
+            $this->productRepository->addStock($product->id(), $delta, $held);
 
             return;
         }
