@@ -32,11 +32,15 @@ final class AdjustProductStockCommandHandlerTest extends TestCase
     /** @var list<array{0: string, 1: int|string}> movements as (kind, units) */
     private array $movements = [];
 
+    /** @var list<string> the reads that take locks, in the order they were made */
+    private array $reads = [];
+
     private int $available = 5;
 
     protected function setUp(): void
     {
         $this->movements = [];
+        $this->reads = [];
         $this->available = 5;
     }
 
@@ -192,6 +196,36 @@ final class AdjustProductStockCommandHandlerTest extends TestCase
         );
     }
 
+    /**
+     * Carts before products, the order every writer in this application takes.
+     *
+     * The ceiling an increase has to respect is "available plus what refundable
+     * carts hold fits under the maximum", and reading what they hold locks cart
+     * rows. Asked for from inside the movement - with the product's own row
+     * already locked - it took the two in the opposite order from a
+     * cancellation, which holds its cart and then reaches for the product: the
+     * two waited for each other, MySQL killed one, and the write bus does not
+     * retry, so an ordinary adjustment or cancellation answered 500.
+     */
+    public function test_the_units_carts_hold_are_read_before_the_product_is_locked(): void
+    {
+        $product = $this->product();
+
+        $this->handler($product)(new AdjustProductStockCommand($product->id()->toString(), quantity: 7));
+
+        self::assertSame(['readHeldUnits', 'lockProduct'], $this->reads);
+    }
+
+    /** And an increment takes the same order; it respects the same ceiling. */
+    public function test_a_positive_delta_reads_them_in_the_same_order(): void
+    {
+        $product = $this->product();
+
+        $this->handler($product)(new AdjustProductStockCommand($product->id()->toString(), delta: 3));
+
+        self::assertSame(['readHeldUnits', 'lockProduct'], $this->reads);
+    }
+
     private function product(): Product
     {
         return new Product(
@@ -210,7 +244,16 @@ final class AdjustProductStockCommandHandlerTest extends TestCase
     private function handler(?Product $product): AdjustProductStockCommandHandler
     {
         $products = $this->createStub(ProductRepository::class);
-        $products->method('ofIdForUpdate')->willReturn($product);
+        $products->method('ofIdForUpdate')->willReturnCallback(function () use ($product): ?Product {
+            $this->reads[] = 'lockProduct';
+
+            return $product;
+        });
+        $products->method('unitsHeldInRefundableCarts')->willReturnCallback(function (): int {
+            $this->reads[] = 'readHeldUnits';
+
+            return 0;
+        });
         $products->method('setStock')->willReturnCallback(function (ProductId $id, Quantity $quantity) use ($product): bool {
             $this->movements[] = ['set', $quantity->asInt()];
             $product?->setQuantity($quantity);

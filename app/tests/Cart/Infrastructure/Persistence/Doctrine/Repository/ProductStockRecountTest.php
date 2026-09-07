@@ -32,14 +32,14 @@ final class ProductStockRecountTest extends TestCase
     {
         $repository = $this->repositoryOver(affectedRows: 0, rowIsThere: true);
 
-        self::assertTrue($repository->setStock(self::anId(), new Quantity(7)));
+        self::assertTrue($repository->setStock(self::anId(), new Quantity(7), 0));
     }
 
     public function test_a_recount_of_a_product_that_is_not_in_the_catalogue_still_fails(): void
     {
         $repository = $this->repositoryOver(affectedRows: 0, rowIsThere: false);
 
-        self::assertFalse($repository->setStock(self::anId(), new Quantity(7)));
+        self::assertFalse($repository->setStock(self::anId(), new Quantity(7), 0));
     }
 
     /** The ordinary case is untouched: one row changed, one recount done. */
@@ -47,7 +47,7 @@ final class ProductStockRecountTest extends TestCase
     {
         $repository = $this->repositoryOver(affectedRows: 1, rowIsThere: true);
 
-        self::assertTrue($repository->setStock(self::anId(), new Quantity(7)));
+        self::assertTrue($repository->setStock(self::anId(), new Quantity(7), 0));
     }
 
     private function repositoryOver(int $affectedRows, bool $rowIsThere): DoctrineProductRepository

@@ -245,7 +245,7 @@ final class DoctrineProductRepositoryTest extends KernelTestCase
         self::assertSame(0, $this->repository->countAll());
         self::assertSame([], $this->repository->findAll(1, 10));
         self::assertTrue($this->repository->existsWithCode(ProductCode::fromString('GONE')), 'the code stays taken');
-        self::assertFalse($this->repository->setStock($product->id(), new Quantity(5)), 'no recount for a withdrawn product');
+        self::assertFalse($this->recount($product, new Quantity(5)), 'no recount for a withdrawn product');
 
         $row = $this->em->find(Product::class, $product->id());
         self::assertInstanceOf(Product::class, $row);
@@ -265,11 +265,11 @@ final class DoctrineProductRepositoryTest extends KernelTestCase
     {
         $product = $this->product(stock: 5);
 
-        self::assertTrue($this->repository->setStock($product->id(), new Quantity(42)));
+        self::assertTrue($this->recount($product, new Quantity(42)));
 
         self::assertSame(42, $product->quantity()->asInt());
         self::assertSame(42, $this->stockInDatabase($product));
-        self::assertFalse($this->repository->setStock(ProductId::fromString(Uuid::uuid4()->toString()), new Quantity(1)));
+        self::assertFalse($this->repository->setStock(ProductId::fromString(Uuid::uuid4()->toString()), new Quantity(1), 0));
     }
 
     /**
@@ -283,7 +283,7 @@ final class DoctrineProductRepositoryTest extends KernelTestCase
     {
         $product = $this->product(stock: 7);
 
-        self::assertTrue($this->repository->setStock($product->id(), new Quantity(7)));
+        self::assertTrue($this->recount($product, new Quantity(7)));
 
         self::assertSame(7, $this->stockInDatabase($product));
     }
@@ -302,7 +302,7 @@ final class DoctrineProductRepositoryTest extends KernelTestCase
         $this->holdInACart($product, 3);
 
         try {
-            $this->repository->setStock($product->id(), new Quantity(Quantity::MAX_QUANTITY));
+            $this->recount($product, new Quantity(Quantity::MAX_QUANTITY));
             self::fail('a recount that leaves the held units nowhere to land must be refused');
         } catch (InvalidStockAdjustmentException $refused) {
             self::assertStringContainsString('3 unit(s)', $refused->getMessage());
@@ -311,7 +311,7 @@ final class DoctrineProductRepositoryTest extends KernelTestCase
         self::assertSame(5, $this->stockInDatabase($product), 'and the column is untouched');
 
         // The most it can be recounted to, and returning the held units still fits.
-        self::assertTrue($this->repository->setStock($product->id(), new Quantity(Quantity::MAX_QUANTITY - 3)));
+        self::assertTrue($this->recount($product, new Quantity(Quantity::MAX_QUANTITY - 3)));
         $this->repository->returnStock($product->id(), 3);
 
         self::assertSame(Quantity::MAX_QUANTITY, $this->stockInDatabase($product));
@@ -332,7 +332,7 @@ final class DoctrineProductRepositoryTest extends KernelTestCase
         $this->holdInACart($product, 4, paid: true);
 
         try {
-            $this->repository->setStock($product->id(), new Quantity(Quantity::MAX_QUANTITY));
+            $this->recount($product, new Quantity(Quantity::MAX_QUANTITY));
             self::fail('a paid cart is one cancellation away from wanting its units back');
         } catch (InvalidStockAdjustmentException $refused) {
             self::assertStringContainsString('4 unit(s)', $refused->getMessage());
@@ -340,7 +340,7 @@ final class DoctrineProductRepositoryTest extends KernelTestCase
 
         self::assertSame(5, $this->stockInDatabase($product));
 
-        self::assertTrue($this->repository->setStock($product->id(), new Quantity(Quantity::MAX_QUANTITY - 4)));
+        self::assertTrue($this->recount($product, new Quantity(Quantity::MAX_QUANTITY - 4)));
         $this->repository->returnStock($product->id(), 4);
 
         self::assertSame(Quantity::MAX_QUANTITY, $this->stockInDatabase($product));
@@ -352,7 +352,7 @@ final class DoctrineProductRepositoryTest extends KernelTestCase
         $product = $this->product(stock: 5);
         $this->holdInACart($product, 3, paid: true, delivered: true);
 
-        self::assertTrue($this->repository->setStock($product->id(), new Quantity(Quantity::MAX_QUANTITY)));
+        self::assertTrue($this->recount($product, new Quantity(Quantity::MAX_QUANTITY)));
         self::assertSame(Quantity::MAX_QUANTITY, $this->stockInDatabase($product));
     }
 
@@ -372,7 +372,7 @@ final class DoctrineProductRepositoryTest extends KernelTestCase
         $this->holdInACart($product, 3);
 
         try {
-            $this->repository->addStock($product->id(), 3);
+            $this->add($product, 3);
             self::fail('an increment that leaves the held units nowhere to land must be refused');
         } catch (InvalidStockAdjustmentException $refused) {
             self::assertStringContainsString('3 unit(s)', $refused->getMessage());
@@ -381,7 +381,7 @@ final class DoctrineProductRepositoryTest extends KernelTestCase
         self::assertSame(Quantity::MAX_QUANTITY - 5, $this->stockInDatabase($product), 'and the column is untouched');
 
         // The most it can be raised by, and returning the held units still fits.
-        $this->repository->addStock($product->id(), 2);
+        $this->add($product, 2);
         self::assertSame(Quantity::MAX_QUANTITY - 3, $this->stockInDatabase($product));
 
         $this->repository->returnStock($product->id(), 3);
@@ -394,7 +394,7 @@ final class DoctrineProductRepositoryTest extends KernelTestCase
         $product = $this->product(stock: Quantity::MAX_QUANTITY);
 
         try {
-            $this->repository->addStock($product->id(), 1);
+            $this->add($product, 1);
             self::fail('adding units past the maximum must be refused');
         } catch (InvalidStockAdjustmentException $refused) {
             self::assertStringContainsString((string) Quantity::MAX_QUANTITY, $refused->getMessage());
@@ -407,7 +407,7 @@ final class DoctrineProductRepositoryTest extends KernelTestCase
     {
         $unknown = ProductId::fromString(Uuid::uuid4()->toString());
 
-        $this->repository->addStock($unknown, 1);
+        $this->repository->addStock($unknown, 1, 0);
 
         self::assertNull($this->repository->ofId($unknown));
     }
@@ -419,7 +419,34 @@ final class DoctrineProductRepositoryTest extends KernelTestCase
         $this->expectException(\InvalidArgumentException::class);
 
         // Deliberately violates the positive-int contract to exercise the guard.
-        $this->repository->addStock($product->id(), -1); // @phpstan-ignore argument.type
+        $this->add($product, -1);
+    }
+
+    /**
+     * A recount, the way the handler makes one: the units refundable carts hold
+     * are read first - with nothing else locked, because that read locks cart
+     * rows and every writer here takes carts before products - and handed to
+     * the movement.
+     */
+    private function recount(Product $product, Quantity $quantity): bool
+    {
+        return $this->repository->setStock(
+            $product->id(),
+            $quantity,
+            $this->repository->unitsHeldInRefundableCarts($product->id()),
+        );
+    }
+
+    /**
+     * An administrative increment, read and applied the same way.
+     *
+     * `$units` is a plain int rather than a positive-int so that a caller can
+     * hand it a negative one on purpose and exercise the repository's guard.
+     */
+    private function add(Product $product, int $units): void
+    {
+        // @phpstan-ignore argument.type
+        $this->repository->addStock($product->id(), $units, $this->repository->unitsHeldInRefundableCarts($product->id()));
     }
 
     /** A cart holding `$units` of the product, as adding a line leaves it. */

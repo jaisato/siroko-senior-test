@@ -63,6 +63,29 @@ interface ProductRepository
     public function returnStock(ProductId $id, int $units): void;
 
     /**
+     * Units of this product that a cart is holding and would give back.
+     *
+     * Not only the pending ones: cancelling a paid cart is a refund, and it
+     * credits the units back too. A delivered or already cancelled cart credits
+     * nothing.
+     *
+     * It is on this interface, rather than inside the two writes that need it,
+     * because of **when** it has to be called: reading it locks cart rows, and
+     * every writer in this application takes carts before products. Asked for
+     * inside `setStock()`/`addStock()` - after the caller has locked the
+     * product - it took the two in the opposite order from a cancellation, and
+     * the two transactions deadlocked over a perfectly ordinary pair of
+     * requests. So the caller asks first, with nothing else held, and hands the
+     * number to the write.
+     *
+     * The number cannot move between the two: what it locks is the cart side,
+     * and a cart operation that changes what is held changes the available
+     * count by the same units in the opposite direction, which writes the
+     * product's own row.
+     */
+    public function unitsHeldInRefundableCarts(ProductId $id): int;
+
+    /**
      * Adds units to the catalogue, which is not the same as giving back units a
      * cart was holding.
      *
@@ -77,11 +100,13 @@ interface ProductRepository
      * nowhere to put its unit and rolled the cancellation back.
      *
      * @param positive-int $units
+     * @param int          $heldUnits what unitsHeldInRefundableCarts() answered,
+     *                                read before anything locked this product
      *
      * @throws \Siroko\Cart\Domain\Exception\InvalidStockAdjustmentException if the sum
      *         would pass the maximum or leave the held units nowhere to land
      */
-    public function addStock(ProductId $id, int $units): void;
+    public function addStock(ProductId $id, int $units, int $heldUnits): void;
 
     /**
      * Reserva unidades de stock de forma atómica. Devuelve false si no había
@@ -109,9 +134,15 @@ interface ProductRepository
      * Sets the available stock to an exact figure, in one UPDATE. Used by the
      * catalogue (a recount), never by the cart, whose movements are relative.
      *
+     * @param int $heldUnits what unitsHeldInRefundableCarts() answered, read
+     *                       before anything locked this product
+     *
      * @return bool false when no such product is in the catalogue
+     *
+     * @throws \Siroko\Cart\Domain\Exception\InvalidStockAdjustmentException if the
+     *         figure would leave the held units nowhere to land
      */
-    public function setStock(ProductId $id, Quantity $quantity): bool;
+    public function setStock(ProductId $id, Quantity $quantity, int $heldUnits): bool;
 
     /**
      * One page of the catalogue, ordered by name. Equivalent to
