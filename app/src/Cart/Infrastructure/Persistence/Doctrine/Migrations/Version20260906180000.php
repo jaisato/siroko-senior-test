@@ -26,8 +26,11 @@ use Doctrine\Migrations\AbstractMigration;
  *
  * The backfill can only use the price the catalogue holds now - it is the one
  * figure the schema ever kept for these rows. Where the two differ, `orders`
- * is the record of what was actually paid: its lines were snapshots from the
- * start, and nothing here touches them.
+ * is the record of what was actually paid, for every cart checked out since
+ * that table existed: its lines were snapshots from the start, and nothing here
+ * touches them. A cart settled before it has no order row at all - the
+ * migration that added the table created it empty - so its own lines are its
+ * only record, which is what preUp() is careful about.
  *
  * One shape of legacy row it cannot carry forward at all: a cart whose lines
  * point at products in two currencies. Cart::ensureSameCurrency() refuses to
@@ -85,17 +88,35 @@ final class Version20260906180000 extends AbstractMigration
         // and the new one cannot read these carts at all until this migration
         // has added the columns. So the instructions named a door that is
         // locked from both sides.
+        //
+        // Nothing in the recipe throws a record away, and `orders` is why: the
+        // migration that creates that table creates it *empty*, for carts that
+        // were already paid included, so a legacy cart's own lines are the only
+        // record it has of what was in it. They are copied out before they go.
+        //
+        // And the two statements that touch a pending cart go in one
+        // transaction: the increment gives the units back and the delete is
+        // what stops them being given back twice, so a connection dropped
+        // between them turns a retry of the recipe into inventory out of
+        // nowhere. The archive table is made first, on its own: DDL commits
+        // whatever transaction is open, so creating it inside would split the
+        // two apart again.
         $this->abortIf([] !== $mixed, \sprintf(
             'These carts hold lines in more than one currency, which no cart may: every read of them would fail '
             . 'to add up, and a pending one could not be checked out: %s. Reconcile them by hand before running '
             . 'this again - cancelling through the API does not clear this, because a canceled cart keeps its '
-            . 'lines and this reads carts of every status. A pending cart is still holding its units, so put them '
-            . 'back on the shelf and then drop its lines: '
-            . 'UPDATE product p JOIN cart_item i ON i.product_id = p.id SET p.quantity = p.quantity + i.quantity '
-            . "WHERE i.cart_id = UUID_TO_BIN('<id>'); DELETE FROM cart_item WHERE cart_id = UUID_TO_BIN('<id>'); "
-            . 'For a settled one the units are already accounted for and only the lines go '
-            . "(DELETE FROM cart_item WHERE cart_id = UUID_TO_BIN('<id>');); the matching row in `orders` is the "
-            . 'record of what was paid, and its lines are the figures to reconcile the cart with.',
+            . "lines and this reads carts of every status.\n\n"
+            . 'Their lines are the only record of what these carts held (`orders` is created empty by this same '
+            . "series, so there is nothing there to reconcile a legacy cart against), so copy them out first:\n"
+            . "  CREATE TABLE IF NOT EXISTS cart_item_mixed_currency LIKE cart_item;\n\n"
+            . "Then, for each cart id above, in one transaction:\n"
+            . "  START TRANSACTION;\n"
+            . "  INSERT INTO cart_item_mixed_currency SELECT * FROM cart_item WHERE cart_id = UUID_TO_BIN('<id>');\n"
+            . "  -- only for a cart listed as pending: it is still holding its units.\n"
+            . '  UPDATE product p JOIN cart_item i ON i.product_id = p.id SET p.quantity = p.quantity + i.quantity '
+            . "WHERE i.cart_id = UUID_TO_BIN('<id>');\n"
+            . "  DELETE FROM cart_item WHERE cart_id = UUID_TO_BIN('<id>');\n"
+            . '  COMMIT;',
             implode(', ', array_map(strval(...), $mixed)),
         ));
     }
