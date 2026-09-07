@@ -31,7 +31,17 @@ final class AdjustProductStockCommandHandler
     public function __invoke(AdjustProductStockCommand $command): ProductRead
     {
         return $this->session->executeAtomically(function () use ($command): ProductRead {
-            $product = $this->productRepository->ofId($command->id());
+            // Locked, like every other writer that decides something from the
+            // row it is about to change. Read without the lock, a withdrawal
+            // committing between the read and the movement turned a perfectly
+            // good reservation into the wrong answer: `reserveStock` carries
+            // `deleted_at IS NULL`, so it changed nothing, and a zero-row
+            // result is read here as "not enough units" - a 409 saying the
+            // stock was short about a product that had simply been taken out
+            // of the catalogue, which is the 404 that follows. Holding the row
+            // puts the withdrawal and the movement in one order, whichever way
+            // round, so what this reads is what it writes over.
+            $product = $this->productRepository->ofIdForUpdate($command->id());
 
             if (null === $product) {
                 throw ProductNotFoundException::withId($command->id());

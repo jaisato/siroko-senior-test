@@ -31,6 +31,7 @@ final class ChangeCartItemQuantityController
     {
         try {
             $body = JsonRequest::toArray($request);
+            JsonRequest::rejectUnknownFields($body, ['quantity']);
 
             $cart = $this->commandBus->handle(
                 new ChangeCartItemQuantityCommand($cartId, $itemId, JsonRequest::requireInt($body, 'quantity'), $this->customer->idOrNull()),

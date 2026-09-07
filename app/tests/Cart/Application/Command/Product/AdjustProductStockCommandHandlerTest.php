@@ -152,6 +152,33 @@ final class AdjustProductStockCommandHandlerTest extends TestCase
         new AdjustProductStockCommand(Uuid::uuid4()->toString(), quantity: -1);
     }
 
+    /**
+     * Under the row lock, like every other writer that decides something from
+     * the row it is about to change.
+     *
+     * Read without it, a withdrawal committing between the read and the
+     * movement gave the wrong answer rather than a race: `reserveStock` carries
+     * `deleted_at IS NULL`, so it changed nothing, and a zero-row result reads
+     * here as "not enough units" - a 409 about the stock of a product that had
+     * simply been taken out of the catalogue.
+     */
+    public function test_the_product_is_read_under_its_row_lock(): void
+    {
+        $product = $this->product();
+
+        $products = $this->createMock(ProductRepository::class);
+        $products->expects(self::never())->method('ofId');
+        $products->expects(self::once())
+            ->method('ofIdForUpdate')
+            ->with(self::equalTo($product->id()))
+            ->willReturn($product);
+        $products->method('setStock')->willReturn(true);
+
+        new AdjustProductStockCommandHandler($products, new RecordingSession())(
+            new AdjustProductStockCommand($product->id()->toString(), quantity: 7),
+        );
+    }
+
     private function product(): Product
     {
         return new Product(
@@ -170,7 +197,7 @@ final class AdjustProductStockCommandHandlerTest extends TestCase
     private function handler(?Product $product): AdjustProductStockCommandHandler
     {
         $products = $this->createStub(ProductRepository::class);
-        $products->method('ofId')->willReturn($product);
+        $products->method('ofIdForUpdate')->willReturn($product);
         $products->method('setStock')->willReturnCallback(function (ProductId $id, Quantity $quantity) use ($product): bool {
             $this->movements[] = ['set', $quantity->asInt()];
             $product?->setQuantity($quantity);

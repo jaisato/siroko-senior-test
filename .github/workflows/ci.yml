@@ -117,6 +117,17 @@ jobs:
           restore-keys: |
             composer-${{ runner.os }}-php${{ matrix.php }}-
 
+      # On both versions of the matrix, and before anything is installed:
+      # composer.json says ">=8.3", so a file that only parses on 8.4 is a bug
+      # even when every gate on a maintainer's 8.4 machine is green. PHPStan
+      # parses at the host version and reports nothing about it, php-cs-fixer
+      # has no such rule, and the suite catches it only as an unexplained batch
+      # of errors in whatever loads the file - never in one no test reaches.
+      # Here it is one line naming the file: grep finding anything other than
+      # "No syntax errors detected" is what the `!` inverts.
+      - name: Every PHP file must parse on this version of the matrix
+        run: '! find src tests config public -name "*.php" -exec php -l {} \; | grep -v "^No syntax errors detected"'
+
       - name: Install dependencies
         run: composer install --no-interaction --no-progress --prefer-dist
 

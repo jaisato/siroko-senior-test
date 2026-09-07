@@ -58,6 +58,7 @@ final class AddCartProductController
         }
 
         $body = JsonRequest::toArray($request);
+        JsonRequest::rejectUnknownFields($body, ['quantity']);
 
         if (!\array_key_exists('quantity', $body)) {
             return CartItem::MIN_QUANTITY;

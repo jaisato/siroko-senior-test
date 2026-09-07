@@ -103,9 +103,27 @@ final class PatchProductControllerTest extends ApiTestCase
     {
         $product = $this->persistProduct();
 
-        $this->request('PATCH', $this->url('api_update_product', ['id' => $product->id()->toString()]), ['quantity' => 3]);
+        $this->request('PATCH', $this->url('api_update_product', ['id' => $product->id()->toString()]), '{}');
 
         $this->assertProblem(400, 'at least one');
+    }
+
+    /**
+     * Stock moves through its own endpoint, and the schema says
+     * `additionalProperties: false`. Nothing enforced it: sent here alongside
+     * a name, the stock was quietly dropped and the 200 said the whole update
+     * had been applied.
+     */
+    public function test_a_field_the_endpoint_does_not_have_is_a_400_problem(): void
+    {
+        $product = $this->persistProduct();
+        $url = $this->url('api_update_product', ['id' => $product->id()->toString()]);
+
+        $this->request('PATCH', $url, ['quantity' => 3]);
+        $this->assertProblem(400, 'does not accept');
+
+        $this->request('PATCH', $url, ['name' => 'Gafas Siroko', 'quantity' => 3]);
+        $this->assertProblem(400, 'does not accept');
     }
 
     public function test_half_a_price_is_a_400_problem(): void

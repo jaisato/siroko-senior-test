@@ -28,6 +28,7 @@ final class PatchProductStockController
     {
         try {
             $body = JsonRequest::toArray($request);
+            JsonRequest::rejectUnknownFields($body, ['quantity', 'delta']);
 
             $product = $this->commandBus->handle(
                 new AdjustProductStockCommand(

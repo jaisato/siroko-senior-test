@@ -87,7 +87,12 @@ final class ChangeCartItemQuantityControllerTest extends ApiTestCase
         $this->request('PATCH', $this->patchUrl($cart, $item), ['quantity' => 'three']);
         $this->assertProblem(400, 'integer');
 
+        // `additionalProperties: false`, now enforced: a name this endpoint
+        // does not read is refused for being that, not for being absent.
         $this->request('PATCH', $this->patchUrl($cart, $item), ['units' => 3]);
+        $this->assertProblem(400, 'does not accept');
+
+        $this->request('PATCH', $this->patchUrl($cart, $item), '{}');
         $this->assertProblem(400, '"quantity" is required');
 
         $this->request('PATCH', $this->patchUrl($cart, $item), '');
