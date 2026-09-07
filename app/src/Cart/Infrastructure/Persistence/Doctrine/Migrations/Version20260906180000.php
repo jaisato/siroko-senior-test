@@ -94,13 +94,15 @@ final class Version20260906180000 extends AbstractMigration
         // were already paid included, so a legacy cart's own lines are the only
         // record it has of what was in it. They are copied out before they go.
         //
-        // And the two statements that touch a pending cart go in one
-        // transaction: the increment gives the units back and the delete is
-        // what stops them being given back twice, so a connection dropped
-        // between them turns a retry of the recipe into inventory out of
-        // nowhere. The archive table is made first, on its own: DDL commits
-        // whatever transaction is open, so creating it inside would split the
-        // two apart again.
+        // And the statements go in one transaction: the increment gives the
+        // units back and the delete is what stops them being given back twice,
+        // so a connection dropped between them turns a retry of the recipe
+        // into inventory out of nowhere. The credit is conditional on the cart
+        // being pending for the same reason from the other side - a settled
+        // cart is not holding its units, and a checkout landing first must not
+        // have them credited underneath it. The archive table is made first,
+        // on its own: DDL commits whatever transaction is open, so creating it
+        // inside would split the rest apart again.
         $this->abortIf([] !== $mixed, \sprintf(
             'These carts hold lines in more than one currency, which no cart may: every read of them would fail '
             . 'to add up, and a pending one could not be checked out: %s. Reconcile them by hand before running '
@@ -112,9 +114,12 @@ final class Version20260906180000 extends AbstractMigration
             . "Then, for each cart id above, in one transaction:\n"
             . "  START TRANSACTION;\n"
             . "  INSERT INTO cart_item_mixed_currency SELECT * FROM cart_item WHERE cart_id = UUID_TO_BIN('<id>');\n"
-            . "  -- only for a cart listed as pending: it is still holding its units.\n"
-            . '  UPDATE product p JOIN cart_item i ON i.product_id = p.id SET p.quantity = p.quantity + i.quantity '
-            . "WHERE i.cart_id = UUID_TO_BIN('<id>');\n"
+            . '  -- The credit carries the pending condition rather than leaving it to the reader: a settled cart '
+            . "is not holding its units,\n"
+            . "  -- and a checkout that gets in first must not have them given back underneath it.\n"
+            . '  UPDATE product p JOIN cart_item i ON i.product_id = p.id JOIN cart c ON c.id = i.cart_id '
+            . 'SET p.quantity = p.quantity + i.quantity '
+            . "WHERE i.cart_id = UUID_TO_BIN('<id>') AND c.status = 1;\n"
             . "  DELETE FROM cart_item WHERE cart_id = UUID_TO_BIN('<id>');\n"
             . '  COMMIT;',
             implode(', ', array_map(strval(...), $mixed)),

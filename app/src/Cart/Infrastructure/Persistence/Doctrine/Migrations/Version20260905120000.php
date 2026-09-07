@@ -37,6 +37,26 @@ final class Version20260905120000 extends AbstractMigration
     /** How the domain compares a code, and how the column is about to. */
     private const BINARY = 'utf8mb4_bin';
 
+    /**
+     * How an operator renames a product code, in SQL.
+     *
+     * It used to say `PATCH /v1/products/{id}`, which is a door locked from
+     * both sides: that endpoint arrives with the version being deployed, so
+     * the running application does not have it - and the new one cannot serve
+     * it here either, because its own query reads `product.deleted_at`, a
+     * column `Version20260906140000` has not added yet. This is the first
+     * migration of the series, so nothing in either version can reach these
+     * rows; SQL can.
+     *
+     * By id rather than by code, because a code two rows share addresses
+     * neither of them - which is the whole of the first gate.
+     */
+    private const RENAME = "Rename by id, which is what both gates name them by:\n"
+        . "  UPDATE product SET code = '<new code>' WHERE id = UUID_TO_BIN('<id>');\n"
+        . 'The new code has to be free once this migration has run, and after it codes are compared '
+        . 'byte for byte (utf8mb4_bin), so `ABC` and `abc` are two codes rather than one; it may not carry a '
+        . 'slash or a control character either, for the reason the second gate gives. Then run this again.';
+
     public function getDescription(): string
     {
         return 'A product code identifies exactly one product: case-sensitive product.code, unique index on it.';
@@ -60,18 +80,23 @@ final class Version20260905120000 extends AbstractMigration
         // only_full_group_by and the query is rejected (error 1055). Every row
         // of a group grouped that way is byte-identical, so the minimum of the
         // group is the code.
+        // With the ids, because renaming one of them is what clears this and a
+        // code that two rows share cannot address either of them.
         /** @var list<string> $duplicates */
         $duplicates = $this->connection->fetchFirstColumn(
             \sprintf(
-                'SELECT MIN(code) FROM product GROUP BY code COLLATE %s HAVING COUNT(*) > 1 ORDER BY MIN(code)',
+                'SELECT CONCAT(MIN(code), \' (\', GROUP_CONCAT(BIN_TO_UUID(id) ORDER BY id SEPARATOR \', \'), \')\') '
+                . 'FROM product GROUP BY code COLLATE %s HAVING COUNT(*) > 1 ORDER BY MIN(code)',
                 self::BINARY,
             ),
         );
 
         $this->abortIf([] !== $duplicates, \sprintf(
-            'product.code is not unique yet: %s%s. Decide which row keeps each code (a withdrawn product keeps its own) and re-run.',
+            'product.code is not unique yet: %s%s. Decide which row keeps each code - a withdrawn product keeps '
+            . 'its own - and rename the others. %s',
             implode(', ', \array_slice($duplicates, 0, 10)),
             \count($duplicates) > 10 ? \sprintf(' and %d more', \count($duplicates) - 10) : '',
+            self::RENAME,
         ));
 
         // The other half of "a code identifies a product": it has to be one the
@@ -83,15 +108,15 @@ final class Version20260905120000 extends AbstractMigration
         // Renaming it here is the same overreach as picking a winner above.
         /** @var list<string> $unaddressable */
         $unaddressable = $this->connection->fetchFirstColumn(
-            "SELECT code FROM product WHERE code REGEXP '[/[:cntrl:]]' ORDER BY code LIMIT 11",
+            "SELECT CONCAT(code, ' (', BIN_TO_UUID(id), ')') FROM product WHERE code REGEXP '[/[:cntrl:]]' ORDER BY code LIMIT 11",
         );
 
         $this->abortIf([] !== $unaddressable, \sprintf(
             'These product codes cannot be addressed by GET /v1/products/by-code/{code}, which reads a slash as '
-            . 'another path segment and refuses a control character: %s%s. Rename them (PATCH /v1/products/{id}) '
-            . 'and re-run.',
+            . 'another path segment and refuses a control character: %s%s. Rename them. %s',
             implode(', ', \array_slice($unaddressable, 0, 10)),
             \count($unaddressable) > 10 ? ' and more' : '',
+            self::RENAME,
         ));
     }
 

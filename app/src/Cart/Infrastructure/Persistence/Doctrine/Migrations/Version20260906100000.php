@@ -48,26 +48,42 @@ final class Version20260906100000 extends AbstractMigration
      * a canceled cart clears them, and its lines stay, as the record of what
      * was in it, the same way the API's cancellation keeps them.
      *
-     * The two statements are one transaction because the increment is what
-     * gives the units back and the status change is what stops them being
-     * given back twice: a connection dropped between them turns a retry into
-     * inventory out of nowhere. And the increment counts *rows*, because at
-     * this point in the series a line is still one unit - `quantity` is the
-     * column this migration is about to add.
+     * The statements are one transaction, and the credit is conditional on the
+     * cart still being pending - both, because either alone leaves a way to
+     * give the same units back twice. The transaction is what stops a
+     * connection dropped in the middle from committing half of it; the
+     * condition is what makes the whole recipe safe to run again, which is the
+     * one thing an operator whose COMMIT did not answer has to do. It also
+     * settles the other race: a checkout landing first takes the cart out of
+     * pending, and then the credit finds nothing to credit rather than putting
+     * back units that have just been sold. The cart's row is locked first so
+     * that decision cannot change under the two statements.
+     *
+     * The increment counts *rows*, because at this point in the series a line
+     * is still one unit - `quantity` is the column this migration is about to
+     * add.
      */
     private const REMEDY = 'Reconcile them by hand before running this again - the API cannot: '
         . 'DELETE /v1/carts/{id} ships with this version, and it cannot read these carts until this migration '
         . 'has added the column its mapping needs. Cancel each cart listed above in SQL instead, which puts its '
         . 'units back on the shelf and takes it out of pending (its lines stay, as the record of what was in '
-        . "it), in one transaction:\n"
+        . "it), in one transaction - and safe to run again if a COMMIT does not answer:\n"
         . "  START TRANSACTION;\n"
+        . "  -- No rows here means it is already done, or was never pending: stop and ROLLBACK.\n"
+        . "  SELECT BIN_TO_UUID(id) FROM cart WHERE id = UUID_TO_BIN('<id>') AND status = "
+        . CartStatus::PENDING . " FOR UPDATE;\n"
         . "  UPDATE product p\n"
-        . "    JOIN (SELECT product_id, COUNT(*) AS units FROM cart_item WHERE cart_id = UUID_TO_BIN('<id>') "
-        . "GROUP BY product_id) held ON held.product_id = p.id\n"
+        . "    JOIN (SELECT i.product_id, COUNT(*) AS units\n"
+        . "            FROM cart_item i JOIN cart c ON c.id = i.cart_id\n"
+        . "           WHERE i.cart_id = UUID_TO_BIN('<id>') AND c.status = " . CartStatus::PENDING . "\n"
+        . "           GROUP BY i.product_id) held ON held.product_id = p.id\n"
         . "     SET p.quantity = p.quantity + held.units;\n"
         . '  UPDATE cart SET status = ' . CartStatus::CANCELED . " WHERE id = UUID_TO_BIN('<id>') AND status = "
         . CartStatus::PENDING . ";\n"
         . "  COMMIT;\n"
+        . 'The credit repeats the pending condition on purpose: once the cart is out of pending - by this recipe '
+        . 'or by a checkout that got in first - it credits nothing, so running the whole thing twice gives the '
+        . "units back once.\n"
         . 'To keep a cart pending instead, delete only its surplus rows in that same transaction and add exactly '
         . 'that many units back to the product - deleting rows on their own leaves the stock short.';
 
