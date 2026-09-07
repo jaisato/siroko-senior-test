@@ -35,6 +35,9 @@ final class CreateCartCommandHandlerTest extends TestCase
     /** @var list<string> productos reservados, en el orden en que se reservaron */
     private array $reserved = [];
 
+    /** @var list<string> productos bloqueados, en el orden en que se bloquearon */
+    private array $lockedProducts = [];
+
     private RecordingSession $session;
 
     /** @var array<string, Product> */
@@ -43,6 +46,7 @@ final class CreateCartCommandHandlerTest extends TestCase
     protected function setUp(): void
     {
         $this->reserved = [];
+        $this->lockedProducts = [];
         $this->catalogue = [];
         $this->session = new RecordingSession();
     }
@@ -228,6 +232,33 @@ final class CreateCartCommandHandlerTest extends TestCase
         ]));
     }
 
+    /**
+     * Cada producto se lee con su fila bloqueada, y en orden de id.
+     *
+     * Leído sin cerrojo, `DELETE /v1/products/{id}` -que sí bloquea- podía
+     * confirmarse entre esa lectura y la reserva: `reserveStock()` filtra por
+     * `deleted_at IS NULL`, así que devolvía false y el cliente recibía un 409
+     * "sin stock" por un producto retirado del catálogo, cuando lo que le
+     * corresponde es el 404 que el propio handler acaba de descartar.
+     */
+    public function test_products_are_read_under_their_row_lock_in_id_order(): void
+    {
+        $second = $this->product('22222222-2222-4222-8222-222222222222');
+        $first = $this->product('11111111-1111-4111-8111-111111111111');
+
+        $this->handler()(new CreateCartCommand([
+            ['productId' => $second->id()->toString(), 'quantity' => 1],
+            ['productId' => $first->id()->toString(), 'quantity' => 1],
+        ]));
+
+        self::assertSame(
+            [$first->id()->toString(), $second->id()->toString()],
+            $this->lockedProducts,
+            'el cerrojo se toma antes de reservar, y en el mismo orden que la reserva',
+        );
+        self::assertSame($this->lockedProducts, $this->reserved);
+    }
+
     private function product(string $id): Product
     {
         $product = new Product(
@@ -262,6 +293,15 @@ final class CreateCartCommandHandlerTest extends TestCase
         );
 
         $products = $this->createStub(ProductRepository::class);
+        // The handler reads each product under its row lock, which is what
+        // keeps a withdrawal from slipping between the read and the reserve.
+        $products->method('ofIdForUpdate')->willReturnCallback(
+            function (ProductId $id): ?Product {
+                $this->lockedProducts[] = $id->toString();
+
+                return $this->catalogue[$id->toString()] ?? null;
+            },
+        );
         $products->method('ofId')->willReturnCallback(
             fn(ProductId $id): ?Product => $this->catalogue[$id->toString()] ?? null,
         );
