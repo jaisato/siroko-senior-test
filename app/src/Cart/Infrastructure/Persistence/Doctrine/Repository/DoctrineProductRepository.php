@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Siroko\Cart\Infrastructure\Persistence\Doctrine\Repository;
 
+use Doctrine\DBAL\ArrayParameterType;
 use Doctrine\DBAL\LockMode;
 use Doctrine\DBAL\ParameterType;
 use Doctrine\DBAL\Types\Types;
@@ -23,6 +24,16 @@ use Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\ProductIdType;
 
 final class DoctrineProductRepository implements ProductRepository
 {
+    /**
+     * The cart states whose units come back to the product if the cart is
+     * called off - which is what `Cart::cancel()` accepts, and what
+     * `CartCancellation` returns stock for. A delivered cart's units are gone
+     * and a canceled one has already given them back.
+     *
+     * @var list<int>
+     */
+    private const array REFUNDABLE_STATUSES = [CartStatus::PENDING, CartStatus::PAID];
+
     public function __construct(
         private readonly EntityManagerInterface $em,
     ) {}
@@ -167,15 +178,15 @@ final class DoctrineProductRepository implements ProductRepository
                            SELECT SUM(i.quantity)
                              FROM cart_item i
                              JOIN cart c ON c.id = i.cart_id
-                            WHERE i.product_id = product.id AND c.status = :pending
+                            WHERE i.product_id = product.id AND c.status IN (:refundable)
                        ), 0)
                 SQL,
-            ['quantity' => $quantity->asInt(), 'id' => $id, 'max' => Quantity::MAX_QUANTITY, 'pending' => CartStatus::PENDING],
+            ['quantity' => $quantity->asInt(), 'id' => $id, 'max' => Quantity::MAX_QUANTITY, 'refundable' => self::REFUNDABLE_STATUSES],
             [
                 'quantity' => ParameterType::INTEGER,
                 'id' => ProductIdType::NAME,
                 'max' => ParameterType::INTEGER,
-                'pending' => ParameterType::INTEGER,
+                'refundable' => ArrayParameterType::INTEGER,
             ],
         );
 
@@ -200,9 +211,9 @@ final class DoctrineProductRepository implements ProductRepository
     }
 
     /**
-     * A recount says what is *available*. The units pending carts are holding
-     * are on top of it, and they come back to this column when a line is
-     * removed or the cart is abandoned.
+     * A recount says what is *available*. The units carts are holding are on
+     * top of it, and they come back to this column when a line is removed or
+     * the cart is called off.
      *
      * Recounted to the maximum with holds outstanding, that return had nowhere
      * to go: returnStock() refused it - rightly, since `quantity` is an INT and
@@ -215,25 +226,36 @@ final class DoctrineProductRepository implements ProductRepository
      */
     private function refuseIfItLeavesNoRoomForHeldUnits(ProductId $id, Quantity $quantity): void
     {
-        $held = $this->unitsHeldInPendingCarts($id);
+        $held = $this->unitsHeldInRefundableCarts($id);
 
         if ($quantity->asInt() > Quantity::MAX_QUANTITY - $held) {
             throw InvalidStockAdjustmentException::leavesNoRoomForHeldUnits($held, Quantity::MAX_QUANTITY);
         }
     }
 
-    /** Units of this product that pending carts have reserved. */
-    private function unitsHeldInPendingCarts(ProductId $id): int
+    /**
+     * Units of this product held by a cart whose cancellation would credit them
+     * back.
+     *
+     * Which is not only the pending ones: `Cart::cancel()` takes a paid cart
+     * too - that is what a refund is - and `CartCancellation` returns the
+     * units of whatever it cancels. Counting only the pending carts left the
+     * paid ones' units outside the ceiling, so a recount to the maximum passed
+     * and calling off the paid cart afterwards was refused with nowhere to put
+     * them, taking the cancellation down with it. A delivered or already
+     * canceled cart credits nothing, so neither is counted.
+     */
+    private function unitsHeldInRefundableCarts(ProductId $id): int
     {
         $held = $this->em->getConnection()->fetchOne(
             <<<'SQL'
                 SELECT COALESCE(SUM(i.quantity), 0)
                   FROM cart_item i
                   JOIN cart c ON c.id = i.cart_id
-                 WHERE i.product_id = :id AND c.status = :pending
+                 WHERE i.product_id = :id AND c.status IN (:refundable)
                 SQL,
-            ['id' => $id, 'pending' => CartStatus::PENDING],
-            ['id' => ProductIdType::NAME, 'pending' => ParameterType::INTEGER],
+            ['id' => $id, 'refundable' => self::REFUNDABLE_STATUSES],
+            ['id' => ProductIdType::NAME, 'refundable' => ArrayParameterType::INTEGER],
         );
 
         return is_numeric($held) ? (int) $held : 0;
