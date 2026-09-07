@@ -124,6 +124,12 @@ Con `API_TOKENS` vacía la API es abierta, que es como está pensada la prueba. 
 carrito pasa entonces a tener dueño: `GET /v1/carts` sólo lista los del llamante y operar
 sobre el carrito de otro es un `404`. `/health` y `/api/docs` siguen abiertos.
 
+Los dos puntos son el separador, así que ni el token ni el cliente pueden llevar uno:
+`t:acme:alice` no dice cuál de los dos separa —¿token `t:acme` para `alice`, o token `t`
+para `acme:alice`?— y se rechaza al arrancar en vez de elegir por el operador. El secreto lo
+genera el despliegue y basta con generarlo sin `:`; un identificador de cliente que lleve uno
+se mapea a un nombre para esta variable.
+
 ### Lo que se paga queda fijado
 
 Una línea apunta al producto en vez de guardar una copia de su precio, que es lo correcto
@@ -225,7 +231,7 @@ Los mismos targets existen en el `Makefile` (`make cs`, `make stan`, `make lint`
 | `MESSENGER_TRANSPORT_DSN` | `app/.env` / compose | transporte Messenger de los eventos de dominio (`doctrine://default`: la cola vive en la base de datos de la aplicación) |
 | `API_ROUTE_PREFIX` | `app/.env` | prefijo de las rutas de la API (`/api`) |
 | `CORS_ALLOW_ORIGIN` | `app/.env` | orígenes permitidos por nelmio/cors |
-| `API_TOKENS` | `app/.env` / compose | pares `token:cliente` separados por comas (el token primero); vacía deja la API abierta |
+| `API_TOKENS` | `app/.env` / compose | pares `token:cliente` separados por comas (el token primero, un solo `:` por par); vacía deja la API abierta |
 | `CART_RESERVATION_TTL` | `app/.env` | segundos que un carrito pendiente retiene su stock (1800) |
 | `IDEMPOTENCY_TTL` | `app/.env` | segundos que se recuerda una `Idempotency-Key` (86400) |
 
