@@ -282,12 +282,29 @@ final class UpgradeGatesTest extends TestCase
             $migration->preUp(new Schema());
             self::fail('expected the gate to stop the migration');
         } catch (AbortMigration $stopped) {
-            self::assertStringNotContainsString('/v1/carts/', $stopped->getMessage(), 'no endpoint clears this');
-            self::assertStringContainsString('DELETE FROM cart_item', $stopped->getMessage());
+            $recipe = $stopped->getMessage();
+
+            self::assertStringNotContainsString('/v1/carts/', $recipe, 'no endpoint clears this');
+            self::assertStringContainsString('DELETE FROM cart_item', $recipe);
             self::assertStringContainsString(
                 'SET p.quantity = p.quantity + i.quantity',
-                $stopped->getMessage(),
+                $recipe,
                 'a pending cart is still holding its units',
+            );
+            // The lines are the only record a legacy cart has: `orders` is
+            // created empty by this same series, even for carts already paid,
+            // so there is nothing there to reconcile one against.
+            self::assertStringContainsString('INSERT INTO cart_item_mixed_currency', $recipe, 'copied out first');
+            self::assertStringContainsString('CREATE TABLE IF NOT EXISTS cart_item_mixed_currency', $recipe);
+            // And the two statements that move stock are one unit of work: a
+            // connection dropped between them turns a retry into inventory out
+            // of nowhere.
+            self::assertStringContainsString('START TRANSACTION;', $recipe);
+            self::assertStringContainsString('COMMIT;', $recipe);
+            self::assertStringNotContainsString(
+                'CREATE TABLE IF NOT EXISTS cart_item_mixed_currency LIKE cart_item;' . "\n" . '  START TRANSACTION',
+                $recipe,
+                'the DDL is outside the transaction, which it would commit',
             );
         }
     }
