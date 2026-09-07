@@ -255,8 +255,41 @@ final class UpgradeGatesTest extends TestCase
         self::assertCount(1, $asked);
         self::assertStringContainsString('COUNT(DISTINCT p.price_currency) > 1', $asked[0]['sql']);
         // A settled cart is as unreadable as a pending one once its lines
-        // disagree, and the backfill is what makes that permanent.
-        self::assertStringNotContainsString('c.status', $asked[0]['sql']);
+        // disagree, and the backfill is what makes that permanent. The status
+        // is read, but only to say which of the two it is in the message: what
+        // to do about the cart depends on whether its units are still held.
+        self::assertStringNotContainsString('WHERE', $asked[0]['sql'], 'nothing narrows the carts it looks at');
+        self::assertStringContainsString("IF(c.status = 1, 'pending', 'settled')", $asked[0]['sql']);
+    }
+
+    /**
+     * And the way out it names has to be one that works.
+     *
+     * It used to say `DELETE /v1/carts/{id}`, which cannot clear this gate
+     * however many times it is run: cancelling changes the status and gives
+     * the units back but keeps every line, deliberately, and this reads carts
+     * of every status - so the same cart comes back on the next attempt. That
+     * endpoint is also part of the version being deployed, while the running
+     * one does not have it and the new one cannot read these carts until this
+     * migration has added the columns.
+     */
+    public function test_the_currency_gate_names_a_way_out_that_clears_it(): void
+    {
+        $asked = [];
+        $migration = new Version20260906180000($this->connection($asked, [['0b6d… (EUR/USD, pending)']]), new NullLogger());
+
+        try {
+            $migration->preUp(new Schema());
+            self::fail('expected the gate to stop the migration');
+        } catch (AbortMigration $stopped) {
+            self::assertStringNotContainsString('/v1/carts/', $stopped->getMessage(), 'no endpoint clears this');
+            self::assertStringContainsString('DELETE FROM cart_item', $stopped->getMessage());
+            self::assertStringContainsString(
+                'SET p.quantity = p.quantity + i.quantity',
+                $stopped->getMessage(),
+                'a pending cart is still holding its units',
+            );
+        }
     }
 
     /**
