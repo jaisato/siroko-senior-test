@@ -50,13 +50,26 @@ final class AdjustProductStockCommandHandlerTest extends TestCase
         self::assertSame(40, $read->quantity);
     }
 
-    public function test_a_positive_delta_returns_units_through_the_atomic_increment(): void
+    /**
+     * `addStock`, not `returnStock`: an administrative increment is not a
+     * refund.
+     *
+     * `returnStock` credits a hold that is being released - what a cart had
+     * reserved stops being held the very moment it lands in the column, so the
+     * total does not move and only the column's own ceiling applies. These
+     * units were never held by anybody, so they have to leave the same room a
+     * recount leaves: available plus what refundable carts hold has to fit
+     * under the maximum. Taking the refund path here let `{"delta":1}` fill the
+     * last slot a pending cart was going to need, and cancelling that cart
+     * afterwards had nowhere to put its unit and rolled back.
+     */
+    public function test_a_positive_delta_adds_units_through_the_bounded_atomic_increment(): void
     {
         $product = $this->product();
 
         $read = $this->handler($product)(new AdjustProductStockCommand($product->id()->toString(), delta: 3));
 
-        self::assertSame([['return', 3]], $this->movements);
+        self::assertSame([['add', 3]], $this->movements);
         self::assertSame(8, $read->quantity);
     }
 
@@ -204,8 +217,15 @@ final class AdjustProductStockCommandHandlerTest extends TestCase
 
             return null !== $product;
         });
+        // Recorded although the handler no longer calls it, so a return to the
+        // refund path shows up here as a movement of the wrong kind rather than
+        // as an identical-looking pass.
         $products->method('returnStock')->willReturnCallback(function (ProductId $id, int $units) use ($product): void {
             $this->movements[] = ['return', $units];
+            $product?->setQuantity(new Quantity($product->quantity()->asInt() + $units));
+        });
+        $products->method('addStock')->willReturnCallback(function (ProductId $id, int $units) use ($product): void {
+            $this->movements[] = ['add', $units];
             $product?->setQuantity(new Quantity($product->quantity()->asInt() + $units));
         });
         $products->method('reserveStock')->willReturnCallback(function (ProductId $id, int $units) use ($product): bool {

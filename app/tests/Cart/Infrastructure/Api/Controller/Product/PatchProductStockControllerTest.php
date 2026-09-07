@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Siroko\Tests\Cart\Infrastructure\Api\Controller\Product;
 
 use Ramsey\Uuid\Uuid;
+use Siroko\Cart\Domain\ValueObject\CartStatus;
+use Siroko\Cart\Domain\ValueObject\Quantity;
 use Siroko\Tests\Cart\Infrastructure\Api\ApiTestCase;
 
 /**
@@ -54,6 +56,36 @@ final class PatchProductStockControllerTest extends ApiTestCase
 
         $this->assertProblem(409, 'below zero');
         self::assertSame(2, $this->stockOf($product));
+    }
+
+    /**
+     * A positive delta is an administrative increment, not a refund, and it
+     * leaves the same room a recount leaves.
+     *
+     * The units a pending or paid cart holds are on top of the available count
+     * and come back to it when the cart is called off. Sent through the refund
+     * path - which credits units that stop being held the moment they land, so
+     * only the column's own ceiling applies - `{"delta":1}` on a product one
+     * unit short of the maximum took the last slot the cart was going to need,
+     * and the cancellation afterwards was refused with nowhere to put its unit
+     * and rolled back in full.
+     */
+    public function test_a_positive_delta_leaves_room_for_the_units_a_cart_holds(): void
+    {
+        $product = $this->persistProduct(stock: Quantity::MAX_QUANTITY - 1);
+        $cart = $this->persistCartWithLines(CartStatus::PENDING, [[$product, 1]]);
+
+        $this->request('PATCH', $this->url('api_adjust_product_stock', ['id' => $product->id()->toString()]), ['delta' => 1]);
+
+        $this->assertProblem(400, '1 unit(s)');
+        self::assertSame(Quantity::MAX_QUANTITY - 1, $this->stockOf($product), 'the column is untouched');
+
+        // And the cancellation that used to roll back still has somewhere to
+        // put the unit it gives back.
+        $this->request('DELETE', $this->url('api_cancel_cart_by_id', ['id' => $cart->id()->toString()]));
+
+        self::assertResponseStatusCodeSame(204);
+        self::assertSame(Quantity::MAX_QUANTITY, $this->stockOf($product));
     }
 
     public function test_the_body_must_say_exactly_one_thing(): void

@@ -169,7 +169,7 @@ use Symfony\Component\Routing\Requirement\Requirement;
             errors: [],
             openapi: new Model\Operation(
                 summary: 'Adjust the available stock of a product',
-                description: 'Exactly one of `quantity` (sets the available units) or `delta` (adds units; negative removes them). The available count never goes below zero: a delta that would answers 409.',
+                description: 'Exactly one of `quantity` (sets the available units) or `delta` (adds units; negative removes them). The available count never goes below zero: a delta that would answers 409. Upwards, the ceiling belongs to the product and not to the column: what is available plus what pending and paid carts are holding has to stay under the maximum, so that calling one of those carts off always has somewhere to put its units. A recount or an increment over that answers 400 saying how many units are held.',
                 parameters: [
                     new Model\Parameter(
                         name: 'id',
@@ -198,7 +198,7 @@ use Symfony\Component\Routing\Requirement\Requirement;
                     ]),
                 ),
                 responses: [
-                    400 => new Model\Response('The body is not a JSON object, names neither or both of quantity and delta, names one this endpoint does not read, or a value is not an integer in range (a delta may not be 0).', new \ArrayObject(Problem::CONTENT)),
+                    400 => new Model\Response('The body is not a JSON object, names neither or both of quantity and delta, names one this endpoint does not read, a value is not an integer in range (a delta may not be 0), or the figure asked for leaves no room under the maximum for the units pending and paid carts are holding.', new \ArrayObject(Problem::CONTENT)),
                     404 => new Model\Response('No product has this id, or it has been withdrawn.', new \ArrayObject(Problem::CONTENT)),
                     409 => new Model\Response('A negative delta would take the available units below zero.', new \ArrayObject(Problem::CONTENT)),
                 ],
