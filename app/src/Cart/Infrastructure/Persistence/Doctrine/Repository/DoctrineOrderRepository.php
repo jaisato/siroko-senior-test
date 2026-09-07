@@ -17,6 +17,8 @@ use Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\OrderIdType;
 
 final class DoctrineOrderRepository implements OrderRepository
 {
+    use LocksRows;
+
     public function __construct(
         private readonly EntityManagerInterface $em,
     ) {}
@@ -83,10 +85,6 @@ final class DoctrineOrderRepository implements OrderRepository
     }
 
     /**
-     * A locked read has to hit the database: without HINT_REFRESH the query
-     * takes the row lock and then hands back whatever copy the identity map
-     * already holds, which is the stale state the lock exists to rule out.
-     *
      * @param Query<null, mixed> $query
      * @param LockMode::*|null   $lock
      *
@@ -94,10 +92,6 @@ final class DoctrineOrderRepository implements OrderRepository
      */
     private function locking(Query $query, ?int $lock): Query
     {
-        if (null === $lock) {
-            return $query;
-        }
-
-        return $query->setLockMode($lock)->setHint(Query::HINT_REFRESH, true);
+        return null === $lock ? $query : $this->forUpdate($query);
     }
 }

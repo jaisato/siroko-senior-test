@@ -24,13 +24,52 @@ use Siroko\Cart\Domain\ValueObject\CartStatus;
  * pending cart whose rows collapse past either bound is a cart that can still
  * be checked out into an order total the money columns do not fit. Those carts
  * stop the migration instead of being rewritten by it - how many units somebody
- * keeps is no more a migration's decision than what they are charged.
+ * keeps is no more a migration's decision than what they are charged - and
+ * preUp() says in SQL how to clear them, because at this point in the upgrade
+ * no endpoint of either version can reach them; see REMEDY.
  */
 final class Version20260906100000 extends AbstractMigration
 {
-    /** What an operator can do about a cart either bound rejects. */
-    private const REMEDY = 'Cancel them through the API (DELETE /v1/carts/{id}), which puts the units back on '
-        . 'the shelf - deleting the rows by hand leaves the stock short - then run this migration again.';
+    /**
+     * What an operator can do about a cart either bound rejects, in SQL.
+     *
+     * It used to say "cancel them through the API (DELETE /v1/carts/{id})",
+     * which is a door locked from both sides. That endpoint arrives with the
+     * version being deployed, so the running application does not have it -
+     * and the new one cannot serve it here either, because this migration is
+     * what adds `cart_item.quantity`, which its own mapping requires: the
+     * controller cannot load the cart until the migration it is meant to
+     * unblock has run. So the only tool that reaches these rows is SQL, and
+     * this says exactly which.
+     *
+     * What it does is what cancelling does: the units go back on the shelf and
+     * the cart stops being pending. Both gates read `status = PENDING` only -
+     * a cart nobody can check out any more cannot overflow an order total - so
+     * a canceled cart clears them, and its lines stay, as the record of what
+     * was in it, the same way the API's cancellation keeps them.
+     *
+     * The two statements are one transaction because the increment is what
+     * gives the units back and the status change is what stops them being
+     * given back twice: a connection dropped between them turns a retry into
+     * inventory out of nowhere. And the increment counts *rows*, because at
+     * this point in the series a line is still one unit - `quantity` is the
+     * column this migration is about to add.
+     */
+    private const REMEDY = 'Reconcile them by hand before running this again - the API cannot: '
+        . 'DELETE /v1/carts/{id} ships with this version, and it cannot read these carts until this migration '
+        . 'has added the column its mapping needs. Cancel each cart listed above in SQL instead, which puts its '
+        . 'units back on the shelf and takes it out of pending (its lines stay, as the record of what was in '
+        . "it), in one transaction:\n"
+        . "  START TRANSACTION;\n"
+        . "  UPDATE product p\n"
+        . "    JOIN (SELECT product_id, COUNT(*) AS units FROM cart_item WHERE cart_id = UUID_TO_BIN('<id>') "
+        . "GROUP BY product_id) held ON held.product_id = p.id\n"
+        . "     SET p.quantity = p.quantity + held.units;\n"
+        . '  UPDATE cart SET status = ' . CartStatus::CANCELED . " WHERE id = UUID_TO_BIN('<id>') AND status = "
+        . CartStatus::PENDING . ";\n"
+        . "  COMMIT;\n"
+        . 'To keep a cart pending instead, delete only its surplus rows in that same transaction and add exactly '
+        . 'that many units back to the product - deleting rows on their own leaves the stock short.';
 
     public function getDescription(): string
     {

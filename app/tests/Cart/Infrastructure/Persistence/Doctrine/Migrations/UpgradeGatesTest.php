@@ -227,6 +227,52 @@ final class UpgradeGatesTest extends TestCase
     }
 
     /**
+     * And both name a way out that can actually be taken here.
+     *
+     * They used to say "cancel them through the API (DELETE /v1/carts/{id})",
+     * an endpoint that ships with this same version: the running application
+     * does not have it, and the new one cannot serve it before this migration
+     * either, because this is what adds the `cart_item.quantity` its mapping
+     * reads. So the instructions named a door locked from both sides, and any
+     * cart either gate reported blocked the deployment with nothing to do
+     * about it.
+     */
+    public function test_both_line_gates_name_a_way_out_that_does_not_need_the_api(): void
+    {
+        foreach ([[['0b6d… (150 units of K3)']], [[], ['0b6d… (101 products)']]] as $answers) {
+            $asked = [];
+            $migration = new Version20260906100000($this->connection($asked, $answers), new NullLogger());
+
+            try {
+                $migration->preUp(new Schema());
+                self::fail('expected the gate to stop the migration');
+            } catch (AbortMigration $stopped) {
+                $recipe = $stopped->getMessage();
+
+                // The endpoint is named only to say it cannot be used here.
+                self::assertStringContainsString('the API cannot', $recipe);
+                // Cancelling is what the recipe does: the units go back and the
+                // cart stops being pending, which is all either gate reads.
+                self::assertStringContainsString('SET p.quantity = p.quantity + held.units;', $recipe);
+                self::assertStringContainsString(
+                    'UPDATE cart SET status = ' . CartStatus::CANCELED,
+                    $recipe,
+                    'the states come from the enum, so renumbering cannot leave the recipe behind',
+                );
+                self::assertStringContainsString('AND status = ' . CartStatus::PENDING . ';', $recipe);
+                // A line is still one row here - `quantity` is the column this
+                // very migration adds - so the units are counted, not summed.
+                self::assertStringContainsString('COUNT(*) AS units', $recipe);
+                // And the two statements are one unit of work: the increment
+                // gives the units back, the status change is what stops a retry
+                // giving them back again.
+                self::assertStringContainsString('START TRANSACTION;', $recipe);
+                self::assertStringContainsString('COMMIT;', $recipe);
+            }
+        }
+    }
+
+    /**
      * A cart is priced in one currency - addItem() and the checkout refuse a
      * product in another, and subtotal() adds the lines without asking - so a
      * legacy row in two adds up to nothing: an exception on every read of the
