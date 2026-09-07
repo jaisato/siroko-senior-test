@@ -36,12 +36,42 @@ final class JsonRequest
 
         $decoded = json_decode($content, true);
 
-        if (!\is_array($decoded) || array_is_list($decoded)) {
+        // The decode succeeded, so the content is valid JSON and a leading `{`
+        // is what makes it an object. array_is_list() cannot answer that on its
+        // own: decoding into associative arrays renders `{}` and `[]` as the
+        // same empty PHP array, and array_is_list([]) is true - so an empty
+        // object, which every one of these endpoints has a documented answer
+        // for ("at least one of", "exactly one of"), was turned away as if it
+        // had not been an object at all.
+        if (!\is_array($decoded) || !str_starts_with($content, '{')) {
             throw new BadRequestHttpException('The request body is not a valid JSON object.');
         }
 
         /** @var array<string, mixed> $decoded */
         return $decoded;
+    }
+
+    /**
+     * Refuses a body carrying a field the endpoint does not have.
+     *
+     * Every request schema in the OpenAPI document says
+     * `additionalProperties: false`, and nothing enforced it: a client that
+     * mistyped a field, or reached for one that belongs to a different
+     * endpoint - `{"name": "...", "stock": 10}` on the edit endpoint, when
+     * stock moves through its own - got a 200 that had quietly done less than
+     * it asked for. The names that were sent are not echoed back; what the
+     * caller needs is the list of names that exist.
+     *
+     * @param array<string, mixed> $data
+     * @param list<string>         $allowed the only fields this endpoint reads
+     */
+    public static function rejectUnknownFields(array $data, array $allowed): void
+    {
+        if ([] === array_diff_key($data, array_fill_keys($allowed, true))) {
+            return;
+        }
+
+        throw new BadRequestHttpException(\sprintf('The body carries a field this endpoint does not accept; it reads only: %s.', implode(', ', $allowed)));
     }
 
     /**
@@ -88,8 +118,10 @@ final class JsonRequest
 
     /**
      * @param array<string, mixed> $data
-     * @param list<string>         $itemKeys keys every entry must carry, for a list
-     *                                       whose entries are themselves objects
+     * @param list<string>         $itemKeys the keys every entry must carry - and,
+     *                                       as the document says of them, the only
+     *                                       ones it may - for a list whose entries
+     *                                       are themselves objects
      *
      * @return list<mixed>
      */
@@ -119,6 +151,10 @@ final class JsonRequest
                 if (!\array_key_exists($key, $item) || null === $item[$key] || '' === $item[$key]) {
                     throw new BadRequestHttpException(\sprintf('Entry %d of "%s" is missing the field "%s".', $index, $field, $key));
                 }
+            }
+
+            if ([] !== array_diff_key($item, array_fill_keys($itemKeys, true))) {
+                throw new BadRequestHttpException(\sprintf('Entry %d of "%s" carries a field this endpoint does not accept; it reads only: %s.', $index, $field, implode(', ', $itemKeys)));
             }
         }
 

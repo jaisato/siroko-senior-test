@@ -132,9 +132,30 @@ final class PostCartControllerTest extends ApiTestCase
 
     public function test_a_body_without_products_is_a_400_problem(): void
     {
-        $this->request('POST', $this->url('api_create_cart'), ['items' => []]);
+        $this->request('POST', $this->url('api_create_cart'), '{}');
 
         $this->assertProblem(400, '"products" is required');
+    }
+
+    /**
+     * The schema says `additionalProperties: false`, and nothing enforced it:
+     * a client that reached for the wrong name was told what was missing but
+     * not that what it had sent is read by nothing.
+     */
+    public function test_a_body_with_a_field_the_endpoint_does_not_have_is_a_400_problem(): void
+    {
+        $this->request('POST', $this->url('api_create_cart'), ['items' => []]);
+
+        $this->assertProblem(400, 'does not accept');
+    }
+
+    public function test_a_product_entry_with_a_field_the_endpoint_does_not_have_is_a_400_problem(): void
+    {
+        $this->request('POST', $this->url('api_create_cart'), [
+            'products' => [['productId' => '0195c6a0-1c37-7000-8000-0000000000ff', 'quantity' => 1, 'price' => '1.00']],
+        ]);
+
+        $this->assertProblem(400, 'does not accept');
     }
 
     /**

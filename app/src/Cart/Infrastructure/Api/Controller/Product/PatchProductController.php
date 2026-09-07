@@ -29,6 +29,7 @@ final class PatchProductController
     {
         try {
             $body = JsonRequest::toArray($request);
+            JsonRequest::rejectUnknownFields($body, ['name', 'code', 'price']);
             [$amount, $currency] = self::price($body);
 
             $product = $this->commandBus->handle(

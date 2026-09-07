@@ -150,7 +150,7 @@ use Symfony\Component\Routing\Requirement\Requirement;
                     ]),
                 ),
                 responses: [
-                    400 => new Model\Response('The body is not a JSON object, names none of the properties, or a value is not one the domain accepts (name or code length, price amount or currency).', new \ArrayObject(Problem::CONTENT)),
+                    400 => new Model\Response('The body is not a JSON object, names none of the properties, names one this endpoint does not read (stock moves through its own), or a value is not one the domain accepts (name or code length, price amount or currency).', new \ArrayObject(Problem::CONTENT)),
                     404 => new Model\Response('No product has this id, or it has been withdrawn.', new \ArrayObject(Problem::CONTENT)),
                     409 => new Model\Response('Another product already has the requested code.', new \ArrayObject(Problem::CONTENT)),
                 ],
@@ -198,7 +198,7 @@ use Symfony\Component\Routing\Requirement\Requirement;
                     ]),
                 ),
                 responses: [
-                    400 => new Model\Response('The body is not a JSON object, names neither or both of quantity and delta, or a value is not an integer in range (a delta may not be 0).', new \ArrayObject(Problem::CONTENT)),
+                    400 => new Model\Response('The body is not a JSON object, names neither or both of quantity and delta, names one this endpoint does not read, or a value is not an integer in range (a delta may not be 0).', new \ArrayObject(Problem::CONTENT)),
                     404 => new Model\Response('No product has this id, or it has been withdrawn.', new \ArrayObject(Problem::CONTENT)),
                     409 => new Model\Response('A negative delta would take the available units below zero.', new \ArrayObject(Problem::CONTENT)),
                 ],

@@ -64,7 +64,12 @@ final class PatchProductStockControllerTest extends ApiTestCase
         $this->request('PATCH', $url, ['quantity' => 1, 'delta' => 1]);
         $this->assertProblem(400, 'exactly one');
 
+        // The schema says `additionalProperties: false`: a name this endpoint
+        // does not read is refused for being that, not for saying nothing.
         $this->request('PATCH', $url, ['units' => 1]);
+        $this->assertProblem(400, 'does not accept');
+
+        $this->request('PATCH', $url, '{}');
         $this->assertProblem(400, 'exactly one');
 
         $this->request('PATCH', $url, ['delta' => 0]);

@@ -42,6 +42,7 @@ final class PostCartController
         // is missing; the command then validates every line as it builds.
         try {
             $jsonData = JsonRequest::toArray($request);
+            JsonRequest::rejectUnknownFields($jsonData, ['products']);
 
             $cart = $this->commandBus->handle(
                 new CreateCartCommand(
