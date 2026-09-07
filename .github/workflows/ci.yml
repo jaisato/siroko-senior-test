@@ -49,6 +49,13 @@ jobs:
           restore-keys: |
             composer-${{ runner.os }}-php${{ matrix.php }}-
 
+      # The same sweep the test job runs, and for the same reason: php-cs-fixer
+      # and PHPStan report a file that only parses on 8.4 as a failure of their
+      # own rather than as the one line naming it that this gives, and this job
+      # is the first to reach 8.3.
+      - name: Every PHP file must parse on this version of the matrix
+        run: '! find src tests config public -name "*.php" -exec php -l {} \; | grep -v "^No syntax errors detected"'
+
       - name: Validate composer.json
         run: composer validate --strict
 

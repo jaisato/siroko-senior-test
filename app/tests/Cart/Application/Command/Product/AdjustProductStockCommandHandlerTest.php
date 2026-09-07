@@ -174,7 +174,7 @@ final class AdjustProductStockCommandHandlerTest extends TestCase
             ->willReturn($product);
         $products->method('setStock')->willReturn(true);
 
-        new AdjustProductStockCommandHandler($products, new RecordingSession())(
+        (new AdjustProductStockCommandHandler($products, new RecordingSession()))(
             new AdjustProductStockCommand($product->id()->toString(), quantity: 7),
         );
     }
