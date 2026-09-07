@@ -356,6 +356,72 @@ final class DoctrineProductRepositoryTest extends KernelTestCase
         self::assertSame(Quantity::MAX_QUANTITY, $this->stockInDatabase($product));
     }
 
+    /**
+     * An administrative increment leaves the same room a recount leaves.
+     *
+     * It is not a refund: these units were never held by anybody, so the total
+     * the product will owe goes up by every one of them. Sent through
+     * `returnStock()` - which credits a hold that is being released, and so
+     * only has the column's own ceiling to respect - `{"delta":1}` filled the
+     * last slot a pending cart was going to need, and cancelling that cart
+     * afterwards had nowhere to put its unit and rolled back.
+     */
+    public function test_added_units_leave_room_for_the_units_a_cart_holds(): void
+    {
+        $product = $this->product(stock: Quantity::MAX_QUANTITY - 5);
+        $this->holdInACart($product, 3);
+
+        try {
+            $this->repository->addStock($product->id(), 3);
+            self::fail('an increment that leaves the held units nowhere to land must be refused');
+        } catch (InvalidStockAdjustmentException $refused) {
+            self::assertStringContainsString('3 unit(s)', $refused->getMessage());
+        }
+
+        self::assertSame(Quantity::MAX_QUANTITY - 5, $this->stockInDatabase($product), 'and the column is untouched');
+
+        // The most it can be raised by, and returning the held units still fits.
+        $this->repository->addStock($product->id(), 2);
+        self::assertSame(Quantity::MAX_QUANTITY - 3, $this->stockInDatabase($product));
+
+        $this->repository->returnStock($product->id(), 3);
+        self::assertSame(Quantity::MAX_QUANTITY, $this->stockInDatabase($product));
+    }
+
+    /** With nothing held, the column's own ceiling is the one that answers. */
+    public function test_added_units_past_the_maximum_are_refused_rather_than_overflowing(): void
+    {
+        $product = $this->product(stock: Quantity::MAX_QUANTITY);
+
+        try {
+            $this->repository->addStock($product->id(), 1);
+            self::fail('adding units past the maximum must be refused');
+        } catch (InvalidStockAdjustmentException $refused) {
+            self::assertStringContainsString((string) Quantity::MAX_QUANTITY, $refused->getMessage());
+        }
+
+        self::assertSame(Quantity::MAX_QUANTITY, $this->stockInDatabase($product), 'nothing was added');
+    }
+
+    public function test_adding_stock_to_an_unknown_product_touches_nothing(): void
+    {
+        $unknown = ProductId::fromString(Uuid::uuid4()->toString());
+
+        $this->repository->addStock($unknown, 1);
+
+        self::assertNull($this->repository->ofId($unknown));
+    }
+
+    public function test_adding_negative_units_is_a_programming_error(): void
+    {
+        $product = $this->product(stock: 5);
+
+        $this->expectException(\InvalidArgumentException::class);
+
+        // Deliberately violates the positive-int contract to exercise the guard.
+        $this->repository->addStock($product->id(), -1); // @phpstan-ignore argument.type
+    }
+
     /** A cart holding `$units` of the product, as adding a line leaves it. */
     private function holdInACart(Product $product, int $units, bool $paid = false, bool $delivered = false): void
     {

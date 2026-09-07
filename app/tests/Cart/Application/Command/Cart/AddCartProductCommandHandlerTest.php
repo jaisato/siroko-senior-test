@@ -108,7 +108,7 @@ final class AddCartProductCommandHandlerTest extends TestCase
         $handler(new AddCartProductCommand($this->cartId(), $product->id()->toString()));
 
         self::assertSame(1, $this->session->transactions);
-        self::assertSame(['begin', 'lockCart', 'reserveStock', 'saveCart', 'commit'], $this->session->log);
+        self::assertSame(['begin', 'lockCart', 'lockProduct', 'reserveStock', 'saveCart', 'commit'], $this->session->log);
     }
 
     /**
@@ -131,10 +131,43 @@ final class AddCartProductCommandHandlerTest extends TestCase
         $handler(new AddCartProductCommand($this->cartId(), $product->id()->toString()));
 
         self::assertSame(
-            ['begin', 'lockCart', 'reserveStock'],
-            \array_slice($this->session->log, 0, 3),
+            ['begin', 'lockCart', 'lockProduct', 'reserveStock'],
+            \array_slice($this->session->log, 0, 4),
             'the cart lock is taken first, and inside the transaction',
         );
+    }
+
+    /**
+     * A withdrawal that commits while the request is in flight is the 404 it
+     * would have been a moment earlier, not a 409 about stock.
+     *
+     * The product is read once without a lock - that read answers an id that
+     * names nothing before a transaction is opened - and a withdrawal
+     * committing after it used to reach `reserveStock()`, whose UPDATE carries
+     * `deleted_at IS NULL`. It changed no rows, zero rows read as "not enough
+     * units", and the client was told the stock was short about a product that
+     * was no longer for sale: the wrong status, the wrong reason, and an
+     * invitation to retry something that could never work. Reading the row
+     * again under its own lock - after the cart's, the order every writer here
+     * takes - answers it for what it is.
+     */
+    public function test_a_product_withdrawn_after_the_first_read_is_not_found(): void
+    {
+        $reserved = [];
+        $product = $this->product(quantity: 4);
+
+        $handler = $this->handler($product, $reserved, available: true, withdrawnUnderTheLock: true);
+
+        try {
+            $handler(new AddCartProductCommand($this->cartId(), $product->id()->toString()));
+            self::fail('expected an exception');
+        } catch (ProductNotFoundException $notFound) {
+            self::assertStringContainsString($product->id()->toString(), $notFound->getMessage());
+        }
+
+        self::assertSame([], $reserved, 'no stock was reserved');
+        self::assertSame(['begin', 'lockCart', 'lockProduct'], $this->session->log, 'and the reservation was never attempted');
+        self::assertCount(0, $this->cart->items());
     }
 
     public function test_an_unknown_cart_is_not_found(): void
@@ -285,6 +318,7 @@ final class AddCartProductCommandHandlerTest extends TestCase
         bool $available,
         bool $cartExists = true,
         int $cartStatus = CartStatus::PENDING,
+        bool $withdrawnUnderTheLock = false,
     ): AddCartProductCommandHandler {
         $this->cart = new Cart(
             CartId::fromString(Uuid::uuid4()->toString()),
@@ -309,6 +343,13 @@ final class AddCartProductCommandHandlerTest extends TestCase
 
         $products = $this->createStub(ProductRepository::class);
         $products->method('ofId')->willReturn($product);
+        $products->method('ofIdForUpdate')->willReturnCallback(
+            function () use ($product, $withdrawnUnderTheLock): ?Product {
+                $this->session->log[] = 'lockProduct';
+
+                return $withdrawnUnderTheLock ? null : $product;
+            },
+        );
         $products->method('reserveStock')->willReturnCallback(
             function (ProductId $id, int $units) use (&$reserved, $available): bool {
                 $this->session->log[] = 'reserveStock';

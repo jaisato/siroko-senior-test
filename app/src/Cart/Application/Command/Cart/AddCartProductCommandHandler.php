@@ -35,13 +35,13 @@ final class AddCartProductCommandHandler
      */
     public function __invoke(AddCartProductCommand $command): CartRead
     {
-        $product = $this->productRepository->ofId($command->productId());
-
-        if (null === $product) {
+        // Answered before a transaction is opened, so an id that names nothing
+        // does not take the cart's row lock on its way to a 404.
+        if (null === $this->productRepository->ofId($command->productId())) {
             throw ProductNotFoundException::withId($command->productId());
         }
 
-        $cart = $this->session->executeAtomically(function () use ($command, $product): Cart {
+        $cart = $this->session->executeAtomically(function () use ($command): Cart {
             // El carrito se bloquea antes de tocar el producto, y dentro de la
             // transacción. Sin esto el orden de cerrojos quedaba invertido
             // respecto a borrar una línea, y las dos operaciones se
@@ -67,6 +67,26 @@ final class AddCartProductCommandHandler
             // pending, correctly, because those units were sold - so every such
             // request destroyed one unit of inventory. Same 409 as checkout.
             $cart->ensurePending();
+
+            // The product is read again, under its own row lock and after the
+            // cart's - the order every writer here takes. It is not the read
+            // above repeated: that one holds nothing, a withdrawal can commit
+            // between the two, and this is what makes a failed reservation
+            // mean one thing. `reserveStock()` carries `deleted_at IS NULL`,
+            // so a product taken out of the catalogue in between changes no
+            // rows, and zero rows read here as "not enough units": the client
+            // was told the stock was short about a product that was simply no
+            // longer for sale - a 409 for what had been a 404 a moment
+            // earlier, and one that invited a retry that could never work.
+            // Holding the row settles it both ways: withdrawn is the 404 it
+            // already was, and a refusal taken under the lock can only be the
+            // units, because nobody can withdraw the product while this
+            // transaction holds it.
+            $product = $this->productRepository->ofIdForUpdate($command->productId());
+
+            if (null === $product) {
+                throw ProductNotFoundException::withId($command->productId());
+            }
 
             $this->addProduct($cart, $product, $command);
 
@@ -95,7 +115,9 @@ final class AddCartProductCommandHandler
      * would grow past what one line holds, the domain refuses and the
      * transaction - reservation included - rolls back.
      *
-     * Se llama con el carrito ya bloqueado.
+     * Se llama con el carrito y el producto ya bloqueados, y por eso el `false`
+     * de la reserva sólo puede significar una cosa: nadie puede retirar el
+     * producto del catálogo mientras esta transacción tiene su fila.
      */
     private function addProduct(Cart $cart, Product $product, AddCartProductCommand $command): void
     {

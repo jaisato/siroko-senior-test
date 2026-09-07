@@ -67,7 +67,15 @@ final class AdjustProductStockCommandHandler
     private function applyDelta(Product $product, int $delta): void
     {
         if ($delta > 0) {
-            $this->productRepository->returnStock($product->id(), $delta);
+            // addStock, not returnStock: these units were never held by
+            // anybody, so they have to leave the same room a recount leaves.
+            // returnStock credits a hold that is being released - what the cart
+            // had reserved stops being held the moment it lands in the column,
+            // so the total does not move - and taking that path here let
+            // `{"delta":1}` fill the last slot a pending or paid cart was going
+            // to need, after which cancelling that cart had nowhere to put its
+            // unit and rolled back.
+            $this->productRepository->addStock($product->id(), $delta);
 
             return;
         }

@@ -103,6 +103,66 @@ final class DoctrineProductRepository implements ProductRepository
         $this->refreshIfManaged($id);
     }
 
+    public function addStock(ProductId $id, int $units): void
+    {
+        $this->guardUnits($units);
+
+        // El mismo incremento atómico que `returnStock()`, con el techo del
+        // producto en lugar del de la columna: estas unidades no las tenía
+        // retenidas nadie, así que lo disponible más lo retenido tiene que
+        // caber bajo el máximo -exactamente lo que comprueba un recuento
+        // absoluto-. Sin esto, `{"delta":1}` sobre un producto a una unidad del
+        // máximo con un carrito reteniendo una pasaba, y cancelar ese carrito
+        // después se quedaba sin sitio donde devolver la suya y tiraba abajo la
+        // cancelación entera.
+        $applied = $this->em->getConnection()->executeStatement(
+            <<<'SQL'
+                UPDATE product
+                   SET quantity = quantity + :units
+                 WHERE id = :id
+                   AND quantity <= :max - :units - COALESCE((
+                           SELECT SUM(i.quantity)
+                             FROM cart_item i
+                             JOIN cart c ON c.id = i.cart_id
+                            WHERE i.product_id = product.id AND c.status IN (:refundable)
+                       ), 0)
+                SQL,
+            ['units' => $units, 'id' => $id, 'max' => Quantity::MAX_QUANTITY, 'refundable' => self::REFUNDABLE_STATUSES],
+            [
+                'units' => ParameterType::INTEGER,
+                'id' => ProductIdType::NAME,
+                'max' => ParameterType::INTEGER,
+                'refundable' => ArrayParameterType::INTEGER,
+            ],
+        );
+
+        if (0 === $applied) {
+            $current = $this->quantityOf($id);
+
+            // Como en `returnStock()`: cero filas puede ser "no existe" -sumar
+            // a un producto que ya no está es un no-op tolerado- o "no cabe",
+            // que sí hay que decir en voz alta, y por cuál de los dos techos.
+            if (null !== $current) {
+                $this->refuseIfItWouldOverflow($id, $units);
+                $this->refuseIfItLeavesNoRoomForHeldUnits($id, $current + $units);
+            }
+        }
+
+        $this->refreshIfManaged($id);
+    }
+
+    /** Lo que la fila tiene ahora mismo, o null si el producto ya no está. */
+    private function quantityOf(ProductId $id): ?int
+    {
+        $current = $this->em->getConnection()->fetchOne(
+            'SELECT quantity FROM product WHERE id = :id',
+            ['id' => $id],
+            ['id' => ProductIdType::NAME],
+        );
+
+        return is_numeric($current) ? (int) $current : null;
+    }
+
     /**
      * @throws InvalidStockAdjustmentException si el producto existe y sumar
      *                                         `$units` pasaría del máximo
@@ -203,7 +263,7 @@ final class DoctrineProductRepository implements ProductRepository
         // In the catalogue and nothing changed: either the figure is the one
         // the column already holds - the most ordinary recount there is - or it
         // is one the condition above refused.
-        $this->refuseIfItLeavesNoRoomForHeldUnits($id, $quantity);
+        $this->refuseIfItLeavesNoRoomForHeldUnits($id, $quantity->asInt());
 
         $this->refreshIfManaged($id);
 
@@ -224,11 +284,11 @@ final class DoctrineProductRepository implements ProductRepository
      *
      * @throws InvalidStockAdjustmentException
      */
-    private function refuseIfItLeavesNoRoomForHeldUnits(ProductId $id, Quantity $quantity): void
+    private function refuseIfItLeavesNoRoomForHeldUnits(ProductId $id, int $available): void
     {
         $held = $this->unitsHeldInRefundableCarts($id);
 
-        if ($quantity->asInt() > Quantity::MAX_QUANTITY - $held) {
+        if ($available > Quantity::MAX_QUANTITY - $held) {
             throw InvalidStockAdjustmentException::leavesNoRoomForHeldUnits($held, Quantity::MAX_QUANTITY);
         }
     }

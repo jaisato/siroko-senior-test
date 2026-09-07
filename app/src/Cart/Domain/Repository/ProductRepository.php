@@ -63,6 +63,27 @@ interface ProductRepository
     public function returnStock(ProductId $id, int $units): void;
 
     /**
+     * Adds units to the catalogue, which is not the same as giving back units a
+     * cart was holding.
+     *
+     * `returnStock()` credits a hold that is being released: what a cart had
+     * reserved stops being held at the very moment it lands in the column, so
+     * the total does not move and only the signed INT's own ceiling applies.
+     * An administrative `{"delta": n}` adds units that were never held by
+     * anyone, and it has to leave the same room `setStock()` leaves: available
+     * plus what refundable carts hold has to fit under the maximum. Without
+     * that, `{"delta":1}` on a product one unit short of the maximum with a
+     * cart holding one succeeded, and cancelling that cart afterwards had
+     * nowhere to put its unit and rolled the cancellation back.
+     *
+     * @param positive-int $units
+     *
+     * @throws \Siroko\Cart\Domain\Exception\InvalidStockAdjustmentException if the sum
+     *         would pass the maximum or leave the held units nowhere to land
+     */
+    public function addStock(ProductId $id, int $units): void;
+
+    /**
      * Reserva unidades de stock de forma atómica. Devuelve false si no había
      * suficientes.
      *
