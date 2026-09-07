@@ -60,9 +60,21 @@ final class CreateCartCommandHandler
         // stock reservado sin carrito que lo justifique.
         $this->session->executeAtomically(function () use ($cart, $command): void {
             foreach ($this->inLockOrder($command->getItems()) as $item) {
-                $product = $this->productRepository->ofId($item['productId']);
+                // Bloqueando la fila, que es lo que hace que la respuesta diga
+                // la verdad. Leída sin cerrojo, una retirada del producto
+                // (`DELETE /v1/products/{id}`, que sí bloquea) podía confirmarse
+                // entre esta lectura y la reserva de abajo: `reserveStock()`
+                // filtra por `deleted_at IS NULL`, así que devolvía false y el
+                // cliente recibía un 409 "sin stock" por un producto que ya no
+                // está en el catálogo, cuando lo que le corresponde es el 404
+                // que este mismo bloque acaba de descartar. El recorrido ya va
+                // en orden de id, que es el orden en el que se toman estos
+                // cerrojos, así que bloquear aquí no abre ningún interbloqueo
+                // nuevo: es el mismo cerrojo que la reserva tomaría un instante
+                // después, un poco antes.
+                $product = $this->productRepository->ofIdForUpdate($item['productId']);
 
-                // `ofId()` devuelve null para un id que no existe, y la
+                // `ofIdForUpdate()` devuelve null para un id que no existe, y la
                 // anotación `@var Product` no lo impedía: la siguiente línea
                 // llamaba a `id()` sobre null y el cliente recibía un 500 por
                 // haber pedido un producto inexistente.

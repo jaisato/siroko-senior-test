@@ -216,11 +216,20 @@ class Order
      * still owed. The one window left is the queue's own - a crash between the
      * send and the ack - which no application can close.
      *
+     * A cancelled order refuses the mark, for the same reason confirm() does.
+     * The delivery is a call to somewhere else and cannot be taken back, so a
+     * cancellation that commits while it is in flight cannot un-send it - but
+     * it can stop the row being written as though the purchase had gone
+     * through: `orders.confirmation_sent_at` is what the API reports as
+     * `confirmedAt`, so recording it here put a confirmation timestamp on an
+     * order every read of which also says it was called off. The record now
+     * says what the order is, and the handler logs the crossing.
+     *
      * @return bool whether this call was the one that recorded it
      */
     public function markConfirmationSent(\DateTimeImmutable $at): bool
     {
-        if (null !== $this->confirmationSentAt) {
+        if (null !== $this->confirmationSentAt || null !== $this->canceledAt) {
             return false;
         }
 

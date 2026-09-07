@@ -127,8 +127,29 @@ final class SendOrderConfirmationCommandHandler
         $this->session->executeAtomically(function () use ($order): void {
             $stored = $this->orderRepository->ofIdForUpdate($order->id());
 
-            if (null !== $stored && $stored->markConfirmationSent($this->clock->now())) {
+            if (null === $stored) {
+                return;
+            }
+
+            if ($stored->markConfirmationSent($this->clock->now())) {
                 $this->orderRepository->save($stored);
+
+                return;
+            }
+
+            // Refused, and a cancellation that landed during the delivery is
+            // the one reason worth a line. The message cannot be taken back -
+            // it left the process - but the row is not written as though the
+            // purchase had gone through: `confirmation_sent_at` is what the
+            // API reports as `confirmedAt`, and stamping it here left an order
+            // that read as confirmed and cancelled at once. The operator gets
+            // told, because a customer holding a confirmation for a purchase
+            // they called off will ask about it.
+            if ($stored->isCanceled() && !$stored->isConfirmationSent()) {
+                $this->logger->warning('Order confirmation crossed a cancellation in flight', [
+                    'orderId' => $stored->id()->toString(),
+                    'canceledAt' => $stored->canceledAt()?->format(\DateTimeInterface::RFC3339),
+                ]);
             }
         });
     }

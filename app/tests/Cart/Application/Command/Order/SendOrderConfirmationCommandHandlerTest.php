@@ -157,6 +157,51 @@ final class SendOrderConfirmationCommandHandlerTest extends TestCase
         self::assertStringContainsString('called off first', $this->logger->records[0]['message']);
     }
 
+    /**
+     * And one that lands during the delivery leaves no confirmation on the row.
+     *
+     * The send itself cannot be taken back - it left the process, which is why
+     * it is outside every transaction - but the record of it can still tell
+     * the truth. `orders.confirmation_sent_at` is what the API reports as
+     * `confirmedAt`, so stamping it here left an order that read as confirmed
+     * and called off at once. The crossing is logged instead, because a
+     * customer holding a confirmation for a purchase they cancelled will ask
+     * about it.
+     */
+    public function test_a_cancellation_that_lands_during_the_send_is_not_recorded_as_confirmed(): void
+    {
+        $order = $this->order();
+        $reads = 0;
+
+        $orders = $this->createStub(OrderRepository::class);
+        // Three reads: the decision, the check before the send, and the record
+        // afterwards. The cancellation lands between the last two, which is
+        // the only window the split leaves open.
+        $orders->method('ofIdForUpdate')->willReturnCallback(function () use ($order, &$reads): Order {
+            $this->session->log[] = 'lockOrder';
+
+            if (++$reads > 2) {
+                $order->cancel(new \DateTimeImmutable('2026-09-06 10:05:01', new \DateTimeZone('UTC')));
+            }
+
+            return $order;
+        });
+        $orders->method('save')->willReturnCallback(function (): void {
+            ++$this->saves;
+            $this->session->log[] = 'saveOrder';
+        });
+
+        $handler = new SendOrderConfirmationCommandHandler($orders, new MockClock('2026-09-06 10:05:00', 'UTC'), $this->logger, $this->session);
+        $handler(new SendOrderConfirmationCommand($order->id()->toString()));
+
+        self::assertTrue($order->isCanceled());
+        self::assertFalse($order->isConfirmationSent(), 'a cancelled order carries no confirmation timestamp');
+        self::assertSame(1, $this->saves, 'the decision was written; the delivery was not');
+        $messages = array_column($this->logger->records, 'message');
+        self::assertContains('Order confirmation sent', $messages, 'the message did go out');
+        self::assertContains('Order confirmation crossed a cancellation in flight', $messages);
+    }
+
     /** An unknown order is an error the queue should see (retry, then park), not a silent drop. */
     public function test_an_unknown_order_is_not_found(): void
     {
