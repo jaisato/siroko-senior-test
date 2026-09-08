@@ -5,8 +5,12 @@
                                       http://doctrine-project.org/schemas/orm/doctrine-mapping.xsd">
 
     <entity name="Siroko\Cart\Domain\Entity\Product"
-            table="product"
-            repository-class="Siroko\Cart\Infrastructure\Persistence\Doctrine\Repository\DoctrineProductRepository">
+            table="product">
+
+        <!-- A code names exactly one product; the handler checks first and this index settles races. -->
+        <unique-constraints>
+            <unique-constraint name="uniq_product_code" columns="code"/>
+        </unique-constraints>
 
         <id name="id" type="product_id" column="id">
             <generator strategy="NONE"/>
@@ -25,7 +29,20 @@
                type="product_code"
                length="50"
                nullable="false"
-        />
+        >
+            <options>
+                <!-- ProductCode::equals() compares byte for byte; MySQL's
+                     default collation does not, so "ABC" and "abc" collided in
+                     uniq_product_code - a valid second create answered 409 -
+                     and GET /v1/products/by-code/abc could hand back ABC.
+                     SQLite compares them case-sensitively, so the two engines
+                     disagreed as well (Version20260906190000). Declared here
+                     because Doctrine puts the connection's default collation on
+                     the mapping side, so leaving it out makes
+                     doctrine:schema:validate report the column as changed. -->
+                <option name="collation">utf8mb4_bin</option>
+            </options>
+        </field>
 
         <field name="quantity"
                column="quantity"
@@ -33,7 +50,10 @@
                nullable="false"
         />
 
-        <!-- Embeddable -->
-        <embedded name="price" class="Siroko\Cart\Infrastructure\Persistence\Doctrine\Embeddable\PriceEmbeddable" />
+        <!-- Set when the product is withdrawn from the catalogue; the row stays for the lines that reference it. -->
+        <field name="deletedAt" column="deleted_at" type="datetime_immutable" nullable="true"/>
+
+        <!-- Embeddable: columns price_amount / price_currency -->
+        <embedded name="price" class="Siroko\Cart\Domain\ValueObject\Price" />
     </entity>
 </doctrine-mapping>

@@ -1,0 +1,69 @@
+# Logging in every environment. Before Monolog the framework's minimal logger
+# wrote unformatted lines to stderr in dev and prod and, in test, to a file
+# services.yaml had to point it at, with the Kernel creating the directory by
+# hand; nothing could be shipped as structured logs, and a test could not read
+# what had been logged.
+monolog:
+    channels:
+        # Deprecations get their own channel so they can be routed apart from
+        # the application's records (prod writes them to a separate stream).
+        - deprecation
+
+when@dev:
+    monolog:
+        handlers:
+            # Readable lines on stderr, which is what `docker compose logs php`
+            # shows for php-fpm.
+            main:
+                type: stream
+                path: php://stderr
+                level: debug
+                channels: ["!event"]
+            console:
+                type: console
+                process_psr_3_messages: false
+                channels: ["!event", "!doctrine", "!console"]
+
+when@test:
+    monolog:
+        handlers:
+            # Records are kept in memory, where a test can read them back
+            # (monolog.handler.main is Monolog's TestHandler), and nothing is
+            # written anywhere: output during a test is a failure for PHPUnit.
+            main:
+                type: test
+                level: debug
+                channels: ["!event"]
+
+when@prod:
+    monolog:
+        handlers:
+            # Buffers a request's records and writes them all, debug context
+            # included, only when an error occurs; a quiet request logs
+            # nothing. 404 and 405 are the client's doing, not errors.
+            main:
+                type: fingers_crossed
+                action_level: error
+                handler: nested
+                excluded_http_codes: [404, 405]
+                channels: ["!deprecation"]
+                buffer_size: 50
+            # One JSON object per line on stderr, for the container runtime and
+            # whatever ships its logs. Stack traces included: a 500 is
+            # otherwise unexplained, since ApiExceptionMapper never returns
+            # them to the client.
+            nested:
+                type: stream
+                path: php://stderr
+                level: debug
+                formatter: monolog.formatter.json
+                include_stacktraces: true
+            console:
+                type: console
+                process_psr_3_messages: false
+                channels: ["!event", "!doctrine"]
+            deprecation:
+                type: stream
+                channels: [deprecation]
+                path: php://stderr
+                formatter: monolog.formatter.json

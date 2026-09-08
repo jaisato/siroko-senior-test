@@ -2,50 +2,115 @@ services:
     _defaults:
         autowire: true
         autoconfigure: true
-        public: public
+        public: false
+
+    _instanceof:
+        # Every probe is a check GET /health and app:health run; HealthChecker
+        # collects them by this tag, so a new dependency is one more class.
+        Siroko\Cart\Infrastructure\Health\HealthProbe:
+            tags: ['app.health_probe']
 
     Siroko\Cart\Infrastructure\Persistence\Doctrine\Fixtures\:
         resource: '../../../src/Cart/Infrastructure/Persistence/Doctrine/Fixtures'
         tags: ['doctrine.fixture.orm']
 
-    Siroko\Cart\Domain\Repository\:
-        resource: '../../../src/Cart/Domain/Repository'
-
     Siroko\Cart\Infrastructure\Persistence\Doctrine\Repository\:
         resource: '../../../src/Cart/Infrastructure/Persistence/Doctrine/Repository'
 
-    Siroko\Cart\Infrastructure\CommandBus\:
-        resource: '../../../src/Cart/Infrastructure/CommandBus'
+    # Only the Tactician middleware. The bus adapters (CommandBusRead/Write/Cli)
+    # are declared one by one in command_bus.yaml, each with its Tactician bus;
+    # a glob over the whole directory used to re-register them afterwards,
+    # autowired to the *default* bus, so every write ran on the read bus and
+    # the write bus's middleware - domain events, rollback-only - never ran.
+    Siroko\Cart\Infrastructure\CommandBus\Middleware\:
+        resource: '../../../src/Cart/Infrastructure/CommandBus/Middleware'
 
     Siroko\Cart\Infrastructure\Event\:
         resource: '../../../src/Cart/Infrastructure/Event'
 
-    Siroko\Cart\Domain\Queue\:
-        resource: '../../../src/Cart/Domain/Queue'
+    # Which command the worker runs for each domain event it consumes. A
+    # command's constructor takes exactly the event's `commandArguments()`.
+    Siroko\Cart\Infrastructure\Event\EventCommandFactory:
+        calls:
+            - add: ['Siroko\Cart\Domain\Event\CartCheckedOut', 'Siroko\Cart\Application\Command\Order\SendOrderConfirmationCommand']
 
     Siroko\Cart\Infrastructure\Queue\:
         resource: '../../../src/Cart/Infrastructure/Queue'
 
-    Siroko\Cart\Infrastructure\Service\:
-        resource: '../../../src/Cart/Infrastructure/Service'
-
-    Siroko\Cart\Infrastructure\CommandBus\Middleware\:
-        resource: '../../../src/Cart/Infrastructure/CommandBus/Middleware/*'
-
     Siroko\Cart\Infrastructure\Api\Controller\:
         resource: '../../../src/Cart/Infrastructure/Api/Controller'
-        tags: [ 'controller.service_arguments' ]
+        tags: ['controller.service_arguments']
+
+    # Console entry points (cart:release-expired, idempotency:purge-expired,
+    # app:health); tagged through #[AsCommand].
+    Siroko\Cart\Infrastructure\Console\:
+        resource: '../../../src/Cart/Infrastructure/Console'
+
+    # Health: the database, and the transport the domain events travel by -
+    # the same one the worker consumes, so the check means what it says.
+    Siroko\Cart\Infrastructure\Health\DatabaseProbe: ~
+
+    Siroko\Cart\Infrastructure\Health\MessengerProbe:
+        arguments:
+            $transport: '@messenger.transport.async'
+
+    Siroko\Cart\Infrastructure\Health\HealthChecker:
+        arguments:
+            $probes: !tagged_iterator app.health_probe
+
+    # Optional API-token authentication. Off while API_TOKENS is empty.
+    Siroko\Cart\Infrastructure\Api\Security\ApiTokens:
+        factory: ['Siroko\Cart\Infrastructure\Api\Security\ApiTokens', 'fromSpec']
+        arguments: ['%env(API_TOKENS)%']
+
+    Siroko\Cart\Infrastructure\Api\Security\ApiTokenAuthenticator:
+        arguments:
+            $apiPrefix: '%api_route_prefix%'
+
+    Siroko\Cart\Infrastructure\Api\Security\CurrentCustomer: ~
+
+    # Idempotency-Key support for the cart writes.
+    Siroko\Cart\Infrastructure\Api\Idempotency\DoctrineIdempotencyStore: ~
+    Siroko\Cart\Infrastructure\Api\Idempotency\IdempotencyStore: '@Siroko\Cart\Infrastructure\Api\Idempotency\DoctrineIdempotencyStore'
+    Siroko\Cart\Infrastructure\Api\Idempotency\IdempotencyGuard:
+        arguments:
+            $idempotencyTtlSeconds: '%api.idempotency_ttl_seconds%'
 
     # Maps an exception onto the API's error response. Registered next to the
     # controllers that inject it; there is no broad App\ glob in this project,
-    # so a class under src/ is not a service until it is named here.
-    Siroko\Cart\Infrastructure\Api\ApiExceptionMapper:
-        arguments:
-            $logger: '@?logger'
+    # so a class under src/ is not a service until it is named here. Its
+    # logger is Monolog's, autowired: an unexpected exception the controllers
+    # swallow is only ever recorded here.
+    Siroko\Cart\Infrastructure\Api\ApiExceptionMapper: ~
 
+    # Same contract for the errors raised before any controller runs (404 on an
+    # unknown route or a malformed id, 405, 406).
+    Siroko\Cart\Infrastructure\Api\EventListener\ApiExceptionListener:
+        arguments:
+            $apiPrefix: '%api_route_prefix%'
+            $debug: '%kernel.debug%'
+
+    # Adds to the generated OpenAPI document what the resource attributes cannot
+    # express: the shared Problem schema, the security schemes, and the 401 every
+    # versioned route answers when API_TOKENS is set.
+    Siroko\Cart\Infrastructure\Api\OpenApi\OpenApiFactoryDecorator:
+        decorates: api_platform.openapi.factory
+        arguments:
+            $decorated: '@.inner'
+            $apiPrefix: '%api_route_prefix%'
+
+    # The publisher is a process-wide singleton by design; exposing it as a
+    # service lets the middleware receive it instead of reaching for the static
+    # accessor, and lets a test hand it a fresh one.
+    Siroko\Cart\Domain\Event\DomainEventPublisher:
+        factory: ['Siroko\Cart\Domain\Event\DomainEventPublisher', 'instance']
+
+    ## Ports -> adapters
     Siroko\Cart\Domain\Repository\ProductRepository: '@Siroko\Cart\Infrastructure\Persistence\Doctrine\Repository\DoctrineProductRepository'
     Siroko\Cart\Domain\Repository\CartRepository: '@Siroko\Cart\Infrastructure\Persistence\Doctrine\Repository\DoctrineCartRepository'
     Siroko\Cart\Domain\Repository\CartItemRepository: '@Siroko\Cart\Infrastructure\Persistence\Doctrine\Repository\DoctrineCartItemRepository'
+    Siroko\Cart\Domain\Repository\OrderRepository: '@Siroko\Cart\Infrastructure\Persistence\Doctrine\Repository\DoctrineOrderRepository'
+    Siroko\Cart\Domain\Queue\MessageDispatcher: '@Siroko\Cart\Infrastructure\Queue\MessageDispatcher'
 
     # Deja que un handler pida que varias escrituras vayan juntas. El bus de
     # escritura sólo lleva doctrine_rollback_only, que marca para rollback una

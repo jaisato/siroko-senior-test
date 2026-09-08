@@ -1,48 +1,47 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Siroko\Cart\Application\Command\Cart;
 
-use Brick\Money\Exception\UnknownCurrencyException;
+use Siroko\Cart\Application\Dto\Cart\CartRead;
 use Siroko\Cart\Domain\Entity\Cart;
-use Siroko\Cart\Domain\Entity\CartItem;
 use Siroko\Cart\Domain\Entity\Product;
+use Siroko\Cart\Domain\Exception\CartNotFoundException;
+use Siroko\Cart\Domain\Exception\InvalidCartStatusException;
+use Siroko\Cart\Domain\Exception\InvalidQuantityException;
 use Siroko\Cart\Domain\Exception\OutOfStockException;
+use Siroko\Cart\Domain\Exception\ProductNotFoundException;
 use Siroko\Cart\Domain\Repository\CartItemRepository;
 use Siroko\Cart\Domain\Repository\CartRepository;
 use Siroko\Cart\Domain\Repository\ProductRepository;
 use Siroko\Cart\Domain\Transaction\TransactionalSession;
-use Siroko\Cart\Infrastructure\Api\Dto\Cart\CartRead;
-use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
-class AddCartProductCommandHandler
+final class AddCartProductCommandHandler
 {
-    /**
-     * @param CartRepository $cartRepository
-     * @param ProductRepository $productRepository
-     * @param CartItemRepository $cartItemRepository
-     */
     public function __construct(
         private readonly CartRepository $cartRepository,
         private readonly ProductRepository $productRepository,
         private readonly CartItemRepository $cartItemRepository,
         private readonly TransactionalSession $session,
-    ) {
-    }
+    ) {}
 
     /**
-     * @param AddCartProductCommand $command
-     * @return CartRead
-     * @throws UnknownCurrencyException
+     * @throws ProductNotFoundException
+     * @throws CartNotFoundException
+     * @throws InvalidCartStatusException when the cart is no longer pending
+     * @throws OutOfStockException
+     * @throws InvalidQuantityException   when the line would exceed what one line holds
      */
     public function __invoke(AddCartProductCommand $command): CartRead
     {
-        $product = $this->productRepository->ofId($command->productId());
-
-        if ($product === null) {
-            throw new NotFoundHttpException("Product not found");
+        // Answered before a transaction is opened, so an id that names nothing
+        // does not take the cart's row lock on its way to a 404.
+        if (null === $this->productRepository->ofId($command->productId())) {
+            throw ProductNotFoundException::withId($command->productId());
         }
 
-        $cart = $this->session->executeAtomically(function () use ($command, $product): Cart {
+        $cart = $this->session->executeAtomically(function () use ($command): Cart {
             // El carrito se bloquea antes de tocar el producto, y dentro de la
             // transacción. Sin esto el orden de cerrojos quedaba invertido
             // respecto a borrar una línea, y las dos operaciones se
@@ -56,11 +55,40 @@ class AddCartProductCommandHandler
             // que una petición perfectamente válida devolvía un 500.
             $cart = $this->cartRepository->ofIdForUpdate($command->cartId());
 
-            if ($cart === null) {
-                throw new NotFoundHttpException("Cart not found");
+            if (null === $cart) {
+                throw CartNotFoundException::withId($command->cartId());
             }
 
-            $this->addProduct($cart, $product);
+            $cart->ensureAccessibleBy($command->customer());
+
+            // Checked under the row lock, before any stock moves. Adding to a
+            // paid cart reserved a unit that nothing could ever release - the
+            // removal path refuses to return stock for a cart that is not
+            // pending, correctly, because those units were sold - so every such
+            // request destroyed one unit of inventory. Same 409 as checkout.
+            $cart->ensurePending();
+
+            // The product is read again, under its own row lock and after the
+            // cart's - the order every writer here takes. It is not the read
+            // above repeated: that one holds nothing, a withdrawal can commit
+            // between the two, and this is what makes a failed reservation
+            // mean one thing. `reserveStock()` carries `deleted_at IS NULL`,
+            // so a product taken out of the catalogue in between changes no
+            // rows, and zero rows read here as "not enough units": the client
+            // was told the stock was short about a product that was simply no
+            // longer for sale - a 409 for what had been a 404 a moment
+            // earlier, and one that invited a retry that could never work.
+            // Holding the row settles it both ways: withdrawn is the 404 it
+            // already was, and a refusal taken under the lock can only be the
+            // units, because nobody can withdraw the product while this
+            // transaction holds it.
+            $product = $this->productRepository->ofIdForUpdate($command->productId());
+
+            if (null === $product) {
+                throw ProductNotFoundException::withId($command->productId());
+            }
+
+            $this->addProduct($cart, $product, $command);
 
             return $cart;
         });
@@ -82,20 +110,22 @@ class AddCartProductCommandHandler
      * interna, presentada como petición mal formada, para una petición que
      * estaba bien-.
      *
-     * Se llama con el carrito ya bloqueado.
+     * The units land on the line the cart already has for the product, or on a
+     * new one; either way the cart holds one line per product. If the line
+     * would grow past what one line holds, the domain refuses and the
+     * transaction - reservation included - rolls back.
+     *
+     * Se llama con el carrito y el producto ya bloqueados, y por eso el `false`
+     * de la reserva sólo puede significar una cosa: nadie puede retirar el
+     * producto del catálogo mientras esta transacción tiene su fila.
      */
-    private function addProduct(Cart $cart, Product $product): void
+    private function addProduct(Cart $cart, Product $product, AddCartProductCommand $command): void
     {
-        if (!$this->productRepository->reserveStock($product->id(), 1)) {
+        if (!$this->productRepository->reserveStock($product->id(), $command->units())) {
             throw new OutOfStockException('Product is out of stock');
         }
 
-        $cart->addItem(
-            new CartItem(
-                $this->cartItemRepository->nextIdentity(),
-                $product
-            )
-        );
+        $cart->addProduct($this->cartItemRepository->nextIdentity(), $product, $command->quantity());
 
         $this->cartRepository->save($cart);
     }

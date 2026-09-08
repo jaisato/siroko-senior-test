@@ -1,30 +1,44 @@
 framework:
     messenger:
-        # Uncomment this (and the failed transport below) to send failed messages to this transport for later handling.
-        # failure_transport: failed
+        # A message that exhausts its retries is kept here instead of being
+        # dropped, so it can be inspected and replayed (messenger:failed:*).
+        failure_transport: failed
 
         transports:
+            # Domain events travel through the application's own database
+            # (symfony/doctrine-messenger, table `messenger_messages`). The
+            # table is created by a migration rather than on first use
+            # (auto_setup: false), so the worker never needs DDL rights and the
+            # schema is what the migrations say it is. RabbitMQ used to play
+            # this part; a broker was a second stateful service to run, monitor
+            # and back up for a queue the database handles at this volume.
             async:
                 dsn: '%env(MESSENGER_TRANSPORT_DSN)%'
                 options:
-                    # Ajusta la topología si quieres ser explícito
-                    exchange:
-                        name: messages
-                        type: direct
-                        durable: true
-                    queues:
-                        messages:
-                            binding_keys: [messages]
-                            durable: true
+                    queue_name: async
+                    auto_setup: false
+                retry_strategy:
+                    max_retries: 3
+                    delay: 1000
+                    multiplier: 2
+                    max_delay: 30000
+
+            failed:
+                dsn: '%env(MESSENGER_TRANSPORT_DSN)%'
+                options:
+                    queue_name: failed
+                    auto_setup: false
 
         routing:
-            # Route your messages to the transports
-            # 'App\Message\YourMessage': async
+            # Every domain event goes to the queue; DomainEventConsumer picks
+            # them up from the worker (see the `worker` compose service).
+            'Siroko\Cart\Domain\Event\DomainEvent': async
 
-# when@test:
-#    framework:
-#        messenger:
-#            transports:
-#                # replace with your transport name here (e.g., my_transport: 'in-memory://')
-#                # For more Messenger testing tools, see https://github.com/zenstruck/messenger-test
-#                async: 'in-memory://'
+when@test:
+    framework:
+        messenger:
+            transports:
+                # No queue in the test environment: dispatched messages stay in
+                # memory, where a test can assert on them and consume them.
+                async: 'in-memory://'
+                failed: 'in-memory://'

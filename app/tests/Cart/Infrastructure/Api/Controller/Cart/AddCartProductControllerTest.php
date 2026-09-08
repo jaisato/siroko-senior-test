@@ -1,97 +1,211 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Siroko\Tests\Cart\Infrastructure\Api\Controller\Cart;
 
-use Doctrine\Persistence\ManagerRegistry;
-use Liip\TestFixturesBundle\Services\DatabaseToolCollection;
 use Ramsey\Uuid\Uuid;
 use Siroko\Cart\Domain\Entity\Cart;
-use Siroko\Cart\Domain\Entity\CartItem;
-use Siroko\Cart\Domain\Entity\Product;
-use Siroko\Cart\Domain\Repository\CartRepository;
-use Siroko\Cart\Domain\Repository\ProductRepository;
-use Siroko\Cart\Domain\ValueObject\CartId;
 use Siroko\Cart\Domain\ValueObject\CartStatus;
-use Siroko\Cart\Domain\ValueObject\ItemId;
-use Siroko\Cart\Infrastructure\Persistence\Doctrine\Fixtures\ProductFixtures;
-use Symfony\Bundle\FrameworkBundle\Test\WebTestCase;
-use Symfony\Component\Routing\RouterInterface;
+use Siroko\Tests\Cart\Infrastructure\Api\ApiTestCase;
 
-class AddCartProductControllerTest extends WebTestCase
+final class AddCartProductControllerTest extends ApiTestCase
 {
     public function test_add_cart_product_by_id(): void
     {
-        $client = static::createClient();
+        $inCart = $this->persistProduct('Already there');
+        $cart = $this->persistCart(CartStatus::PENDING, $inCart);
+        $product = $this->persistProduct('New one', stock: 3);
 
-        $registry = static::getContainer()->get(ManagerRegistry::class);
-        $emName = array_keys($registry->getManagerNames())[0];
-
-        $tools = static::getContainer()->get(DatabaseToolCollection::class)->get($emName);
-
-        $conn = static::getContainer()->get('doctrine')->getConnection();
-        if ('' === (string) $conn->getDatabase()) {
-            $conn->executeStatement('USE `siroko_cart_test`');
-        }
-
-        $tools->loadFixtures([
-            ProductFixtures::class,
-        ], true);
-
-        /** @var ProductRepository $productRepository */
-        $productRepository = static::getContainer()->get(ProductRepository::class);
-
-        /** @var array|Product[] $products */
-        $products = $productRepository->findAll(1, 5);
-
-        /** @var CartRepository $cartRepository */
-        $cartRepository = static::getContainer()->get(CartRepository::class);
-
-        $cart = new Cart(
-            CartId::fromString(Uuid::uuid4()->toString()),
-            new CartStatus(CartStatus::PENDING),
-        );
-
-        $addProduct = null;
-        foreach ($products as $product) {
-            if ($addProduct === null) {
-                if ($product->quantity()->asInt() > 1) {
-                    $addProduct = $product;
-                }
-            }
-            $item = new CartItem(ItemId::fromString(Uuid::uuid4()->toString()), $product);
-            $cart->addItem($item);
-        }
-
-        $cartRepository->save($cart);
-
-        self::assertCount(5, $cart->items()->toArray());
-
-        /** @var RouterInterface $router */
-        $router = static::getContainer()->get(RouterInterface::class);
-        $url = $router->generate(
-            'api_add_cart_product_by_id',
-            ['cartId' => $cart->id()->toString(), 'productId' => $addProduct->id()->toString()]
-        );
-
-        $client->request('PUT', $url, [
-            'headers' => ['accept' => 'application/json'],
-        ]);
-
-        $cartResponse = json_decode(
-            $client->getResponse()->getContent(),
-            true,
-            512,
-            JSON_THROW_ON_ERROR
-        );
+        $this->request('PUT', $this->url('api_add_cart_product_by_id', [
+            'cartId' => $cart->id()->toString(),
+            'productId' => $product->id()->toString(),
+        ]));
 
         self::assertResponseStatusCodeSame(200);
-        self::assertResponseIsSuccessful();
+        $body = $this->json();
 
-        self::assertIsArray($cartResponse);
+        self::assertSame($cart->id()->toString(), $body['id']);
+        self::assertCount(2, $body['items']);
+        self::assertSame(2, $this->stockOf($product), 'one unit was reserved');
+    }
 
-        self::assertArrayHasKey('id', $cartResponse);
-        self::assertSame($cart->id()->toString(), $cartResponse['id']);
-        self::assertArrayHasKey('items', $cartResponse);
-        self::assertCount(6, $cartResponse['items']);
+    /** Adding a product the cart holds grows its line instead of opening a second one. */
+    public function test_adding_a_product_already_in_the_cart_grows_its_line(): void
+    {
+        $product = $this->persistProduct(stock: 5);
+        $cart = $this->persistCartWithLines(CartStatus::PENDING, [[$product, 2]]);
+
+        $this->request('PUT', $this->url('api_add_cart_product_by_id', [
+            'cartId' => $cart->id()->toString(),
+            'productId' => $product->id()->toString(),
+        ]));
+
+        self::assertResponseStatusCodeSame(200);
+        $items = array_values($this->json()['items']);
+        self::assertCount(1, $items);
+        self::assertSame(3, $items[0]['quantity']);
+        self::assertSame(4, $this->stockOf($product));
+    }
+
+    public function test_a_body_may_ask_for_several_units_at_once(): void
+    {
+        $cart = $this->persistCart();
+        $product = $this->persistProduct(stock: 5);
+
+        $this->request('PUT', $this->url('api_add_cart_product_by_id', [
+            'cartId' => $cart->id()->toString(),
+            'productId' => $product->id()->toString(),
+        ]), ['quantity' => 4]);
+
+        self::assertResponseStatusCodeSame(200);
+        self::assertSame(4, array_values($this->json()['items'])[0]['quantity']);
+        self::assertSame(1, $this->stockOf($product));
+    }
+
+    public function test_asking_for_more_units_than_the_stock_is_a_409_problem_and_reserves_nothing(): void
+    {
+        $cart = $this->persistCart();
+        $product = $this->persistProduct(stock: 2);
+
+        $this->request('PUT', $this->url('api_add_cart_product_by_id', [
+            'cartId' => $cart->id()->toString(),
+            'productId' => $product->id()->toString(),
+        ]), ['quantity' => 3]);
+
+        $this->assertProblem(409, 'out of stock');
+        self::assertSame(2, $this->stockOf($product));
+    }
+
+    public function test_a_quantity_a_line_cannot_hold_is_a_400_problem(): void
+    {
+        $cart = $this->persistCart();
+        $product = $this->persistProduct(stock: 5);
+
+        $this->request('PUT', $this->url('api_add_cart_product_by_id', [
+            'cartId' => $cart->id()->toString(),
+            'productId' => $product->id()->toString(),
+        ]), ['quantity' => 0]);
+
+        $this->assertProblem(400, 'greater or equal to 1');
+
+        $this->request('PUT', $this->url('api_add_cart_product_by_id', [
+            'cartId' => $cart->id()->toString(),
+            'productId' => $product->id()->toString(),
+        ]), ['quantity' => 'two']);
+
+        $this->assertProblem(400, 'integer');
+        self::assertSame(5, $this->stockOf($product));
+    }
+
+    /** A cart is paid in one currency; a product in another has no place in its total. */
+    public function test_a_product_in_another_currency_is_a_409_problem_and_reserves_nothing(): void
+    {
+        $cart = $this->persistCart(CartStatus::PENDING, $this->persistProduct('Euros', currency: 'EUR'));
+        $dollars = $this->persistProduct('Dollars', currency: 'USD', stock: 3);
+
+        $this->request('PUT', $this->url('api_add_cart_product_by_id', [
+            'cartId' => $cart->id()->toString(),
+            'productId' => $dollars->id()->toString(),
+        ]));
+
+        $this->assertProblem(409, 'USD');
+        self::assertSame(3, $this->stockOf($dollars));
+        self::assertCount(1, $this->reloadCart($cart)->items());
+    }
+
+    public function test_an_unknown_cart_is_a_404_problem(): void
+    {
+        $product = $this->persistProduct();
+
+        $this->request('PUT', $this->url('api_add_cart_product_by_id', [
+            'cartId' => Uuid::uuid4()->toString(),
+            'productId' => $product->id()->toString(),
+        ]));
+
+        $this->assertProblem(404, 'Cart');
+        self::assertSame(5, $this->stockOf($product), 'nothing was reserved');
+    }
+
+    public function test_an_unknown_product_is_a_404_problem(): void
+    {
+        $cart = $this->persistCart();
+
+        $this->request('PUT', $this->url('api_add_cart_product_by_id', [
+            'cartId' => $cart->id()->toString(),
+            'productId' => Uuid::uuid4()->toString(),
+        ]));
+
+        $this->assertProblem(404, 'Product');
+    }
+
+    /**
+     * Adding to a paid cart reserved a unit that could never be released: the
+     * removal path refuses to return stock for a cart that is not pending. Every
+     * such request destroyed one unit of inventory.
+     */
+    public function test_adding_to_a_paid_cart_is_a_409_problem_and_reserves_nothing(): void
+    {
+        $cart = $this->persistCart(CartStatus::PAID);
+        $product = $this->persistProduct(stock: 3);
+
+        $this->request('PUT', $this->url('api_add_cart_product_by_id', [
+            'cartId' => $cart->id()->toString(),
+            'productId' => $product->id()->toString(),
+        ]));
+
+        $this->assertProblem(409, 'not pending');
+        self::assertSame(3, $this->stockOf($product));
+        self::assertCount(0, $this->reloadCart($cart)->items());
+    }
+
+    public function test_a_product_out_of_stock_is_a_409_problem(): void
+    {
+        $cart = $this->persistCart();
+        $product = $this->persistProduct(stock: 0);
+
+        $this->request('PUT', $this->url('api_add_cart_product_by_id', [
+            'cartId' => $cart->id()->toString(),
+            'productId' => $product->id()->toString(),
+        ]));
+
+        $this->assertProblem(409, 'out of stock');
+        self::assertCount(0, $this->reloadCart($cart)->items());
+    }
+
+    /**
+     * The cap was applied only to a cart created in one request, so this
+     * endpoint grew a cart past it one product at a time - and a cart with
+     * more lines than Price::MAX_AMOUNT assumes fails at checkout with a 500.
+     *
+     * 409 and not 400: the request naming one more product is perfectly well
+     * formed, and what refuses it is the state of the cart.
+     */
+    public function test_a_full_cart_refuses_another_product_and_reserves_nothing(): void
+    {
+        $lines = [];
+
+        for ($line = 0; $line < Cart::MAX_LINES; ++$line) {
+            $lines[] = [$this->persistProduct('Line ' . $line), 1];
+        }
+
+        $cart = $this->persistCartWithLines(CartStatus::PENDING, $lines);
+        $extra = $this->persistProduct('One too many', stock: 3);
+
+        $this->request('PUT', $this->url('api_add_cart_product_by_id', [
+            'cartId' => $cart->id()->toString(),
+            'productId' => $extra->id()->toString(),
+        ]));
+
+        $this->assertProblem(409, 'at most ' . Cart::MAX_LINES . ' distinct products');
+        self::assertSame(3, $this->stockOf($extra), 'the reservation rolled back with the transaction');
+        self::assertCount(Cart::MAX_LINES, $this->reloadCart($cart)->items());
+    }
+
+    public function test_a_malformed_cart_id_is_a_404_problem(): void
+    {
+        $this->request('PUT', '/api/v1/carts/nope/products/' . Uuid::uuid4()->toString() . '/add');
+
+        $this->assertProblem(404);
     }
 }

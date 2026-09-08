@@ -1,28 +1,22 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Siroko\Cart\Domain\Repository;
 
 use Siroko\Cart\Domain\Entity\Cart;
 use Siroko\Cart\Domain\ValueObject\CartId;
+use Siroko\Cart\Domain\ValueObject\CartStatus;
+use Siroko\Cart\Domain\ValueObject\CustomerId;
 use Siroko\Cart\Domain\ValueObject\ItemId;
+use Siroko\Cart\Domain\ValueObject\ProductId;
 
 interface CartRepository
 {
-    /**
-     * @return CartId
-     */
     public function nextIdentity(): CartId;
 
-    /**
-     * @param Cart $cart
-     * @return void
-     */
     public function save(Cart $cart): void;
 
-    /**
-     * @param CartId $id
-     * @return Cart|null
-     */
     public function ofId(CartId $id): ?Cart;
 
     /**
@@ -43,10 +37,49 @@ interface CartRepository
 
     /**
      * Elimina un item del cart dado su itemId
-     *
-     * @param CartId $cartId
-     * @param ItemId $itemId
-     * @return void
      */
     public function removeItem(CartId $cartId, ItemId $itemId): void;
+
+    /**
+     * One page of carts, newest first: a customer's own carts when `$owner`
+     * is given, every cart otherwise; narrowed to one status when asked.
+     *
+     * @param positive-int $pageNumber 1-based
+     * @param positive-int $pageSize
+     *
+     * @return list<Cart>
+     */
+    public function search(?CustomerId $owner, ?CartStatus $status, int $pageNumber, int $pageSize): array;
+
+    /**
+     * @return int<0, max>
+     */
+    public function countMatching(?CustomerId $owner, ?CartStatus $status): int;
+
+    /**
+     * Identifiers of pending carts whose reservation lapsed at or before
+     * `$now`, oldest deadline first, at most `$limit` of them.
+     *
+     * Only the ids: the sweep loads each cart again with its row locked
+     * before deciding, so a checkout that wins the race is respected.
+     *
+     * @param positive-int $limit
+     *
+     * @return list<CartId>
+     */
+    public function expiredPendingIds(\DateTimeImmutable $now, int $limit): array;
+
+    /**
+     * Whether any pending cart holds a line for this product.
+     *
+     * Asked before a product's currency is allowed to change. A cart line
+     * dereferences the product rather than carrying a copy of its price, so a
+     * product repriced into another currency while it sits in a cart breaks
+     * that cart's "one currency" invariant after the fact: `Cart::subtotal()`
+     * throws from then on, reading the cart answers 409 and checkout rolls
+     * back every time. The customer cannot fix it - the cart is unusable until
+     * it is cancelled or expires - so the change has to be refused while the
+     * cart is still pending.
+     */
+    public function anyPendingHolds(ProductId $productId): bool;
 }

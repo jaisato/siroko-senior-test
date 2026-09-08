@@ -2,7 +2,11 @@ services:
     _defaults:
         autowire: true
         autoconfigure: true
-        public: public
+        # Was `public: public` - a string, which is truthy, so every handler was
+        # a public service reachable through the container.
+        public: false
+        bind:
+            int $reservationTtlSeconds: '%cart.reservation_ttl_seconds%'
 
     Siroko\Cart\Application\Command\:
         resource: '../../../src/Cart/Application/Command/**'
@@ -15,3 +19,7 @@ services:
         exclude: '../../../src/Cart/Application/Query/**/*Query.php'
         tags:
             - { name: tactician.handler, typehints: true }
+
+    # Application services shared by several handlers (no bus involved).
+    Siroko\Cart\Application\Service\:
+        resource: '../../../src/Cart/Application/Service'

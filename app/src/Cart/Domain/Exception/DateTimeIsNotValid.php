@@ -1,8 +1,8 @@
 <?php
 
-namespace Siroko\Cart\Domain\Exception;
+declare(strict_types=1);
 
-use function sprintf;
+namespace Siroko\Cart\Domain\Exception;
 
 final class DateTimeIsNotValid extends \Exception
 {
@@ -12,28 +12,28 @@ final class DateTimeIsNotValid extends \Exception
         int $day,
         int $hours,
         int $minutes,
-        int $seconds
+        int $seconds,
     ): self {
         return new self(
-            sprintf(
+            \sprintf(
                 'Combination of year "%s", month "%s", day "%s", hour "%s", minutes "%s" and seconds "%s" is not valid',
                 $year,
                 $month,
                 $day,
                 $hours,
                 $minutes,
-                $seconds
-            )
+                $seconds,
+            ),
         );
     }
 
     public static function becauseDateTimeFormatIsNotValid(string $dateTimeFormat): self
     {
         return new self(
-            sprintf(
+            \sprintf(
                 'String "%s" does not have a valid format',
-                $dateTimeFormat
-            )
+                $dateTimeFormat,
+            ),
         );
     }
 }

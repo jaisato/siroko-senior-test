@@ -1,48 +1,52 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Siroko\Cart\Application\Command\Cart;
 
-use Brick\Money\Exception\UnknownCurrencyException;
+use Psr\Clock\ClockInterface;
+use Siroko\Cart\Application\Dto\Cart\CartRead;
 use Siroko\Cart\Domain\Entity\Cart;
-use Siroko\Cart\Domain\Entity\CartItem;
-use Siroko\Cart\Domain\Entity\Product;
+use Siroko\Cart\Domain\Exception\InvalidQuantityException;
+use Siroko\Cart\Domain\Exception\OutOfStockException;
+use Siroko\Cart\Domain\Exception\ProductNotFoundException;
 use Siroko\Cart\Domain\Repository\CartItemRepository;
 use Siroko\Cart\Domain\Repository\CartRepository;
-use Siroko\Cart\Domain\Exception\OutOfStockException;
 use Siroko\Cart\Domain\Repository\ProductRepository;
 use Siroko\Cart\Domain\Transaction\TransactionalSession;
-use Siroko\Cart\Domain\ValueObject\CartStatus;
 use Siroko\Cart\Domain\ValueObject\ProductId;
 use Siroko\Cart\Domain\ValueObject\Quantity;
-use Siroko\Cart\Infrastructure\Api\Dto\Cart\CartRead;
-use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
-class CreateCartCommandHandler
+final class CreateCartCommandHandler
 {
+    private readonly \DateInterval $reservationTtl;
+
     /**
-     * @param CartRepository $cartRepository
-     * @param CartItemRepository $cartItemRepository
-     * @param ProductRepository $productRepository
+     * @param int $reservationTtlSeconds how long a new cart holds its units before the sweep releases them
      */
     public function __construct(
         private readonly CartRepository $cartRepository,
         private readonly CartItemRepository $cartItemRepository,
         private readonly ProductRepository $productRepository,
         private readonly TransactionalSession $session,
+        private readonly ClockInterface $clock,
+        int $reservationTtlSeconds,
     ) {
+        if ($reservationTtlSeconds < 1) {
+            throw new \InvalidArgumentException(\sprintf('The reservation TTL must be at least one second, got %d.', $reservationTtlSeconds));
+        }
+
+        $this->reservationTtl = new \DateInterval(\sprintf('PT%dS', $reservationTtlSeconds));
     }
 
     /**
-     * @param CreateCartCommand $command
-     * @return CartRead
-     * @throws UnknownCurrencyException
+     * @throws ProductNotFoundException
+     * @throws OutOfStockException
+     * @throws InvalidQuantityException when the lines of one product add up to more than a line holds
      */
     public function __invoke(CreateCartCommand $command): CartRead
     {
-        $cart = new Cart(
-            $this->cartRepository->nextIdentity(),
-            new CartStatus(CartStatus::PENDING),
-        );
+        $cart = Cart::open($this->cartRepository->nextIdentity(), $this->clock->now(), $this->reservationTtl, $command->customer());
 
         // Igual que en AddCartProductCommandHandler: la reserva es un ajuste
         // relativo y condicional, no un `setQuantity()` con un valor absoluto
@@ -56,36 +60,45 @@ class CreateCartCommandHandler
         // stock reservado sin carrito que lo justifique.
         $this->session->executeAtomically(function () use ($cart, $command): void {
             foreach ($this->inLockOrder($command->getItems()) as $item) {
-                /** @var Product|null $product */
-                $product = $this->productRepository->ofId($item['productId']);
+                // Bloqueando la fila, que es lo que hace que la respuesta diga
+                // la verdad. Leída sin cerrojo, una retirada del producto
+                // (`DELETE /v1/products/{id}`, que sí bloquea) podía confirmarse
+                // entre esta lectura y la reserva de abajo: `reserveStock()`
+                // filtra por `deleted_at IS NULL`, así que devolvía false y el
+                // cliente recibía un 409 "sin stock" por un producto que ya no
+                // está en el catálogo, cuando lo que le corresponde es el 404
+                // que este mismo bloque acaba de descartar. El recorrido ya va
+                // en orden de id, que es el orden en el que se toman estos
+                // cerrojos, así que bloquear aquí no abre ningún interbloqueo
+                // nuevo: es el mismo cerrojo que la reserva tomaría un instante
+                // después, un poco antes.
+                $product = $this->productRepository->ofIdForUpdate($item['productId']);
 
-                // `ofId()` devuelve null para un id que no existe, y la
+                // `ofIdForUpdate()` devuelve null para un id que no existe, y la
                 // anotación `@var Product` no lo impedía: la siguiente línea
                 // llamaba a `id()` sobre null y el cliente recibía un 500 por
                 // haber pedido un producto inexistente.
-                if ($product === null) {
-                    throw new NotFoundHttpException(
-                        sprintf('Product %s not found', $item['productId']->toString())
-                    );
+                if (null === $product) {
+                    throw ProductNotFoundException::withId($item['productId']);
                 }
 
-                /** @var Quantity $quantity */
-                $quantity = $item['quantity'];
+                $units = $item['quantity']->asInt();
 
-                if (!$this->productRepository->reserveStock($product->id(), $quantity->asInt())) {
-                    throw new OutOfStockException(
-                        sprintf('Product %s does not have %d units available', $product->id()->toString(), $quantity->asInt())
-                    );
+                // The command refuses lines below MIN_ORDERED_QUANTITY; the
+                // stock movement contract (positive-int) relies on it.
+                if ($units < CreateCartCommand::MIN_ORDERED_QUANTITY) {
+                    throw new \LogicException('A cart line always asks for at least one unit; CreateCartCommand guarantees it.');
                 }
 
-                for ($i = 0; $i < $quantity->asInt(); $i++) {
-                    $cart->addItem(
-                        new CartItem(
-                            $this->cartItemRepository->nextIdentity(),
-                            $product,
-                        )
-                    );
+                if (!$this->productRepository->reserveStock($product->id(), $units)) {
+                    throw new OutOfStockException(\sprintf('Product %s does not have %d units available', $product->id()->toString(), $units));
                 }
+
+                // One line per product, holding all its units. A request that
+                // names the same product twice folds into a single line; if the
+                // sum is more than a line holds, the domain refuses and the
+                // whole transaction - reservations included - rolls back.
+                $cart->addProduct($this->cartItemRepository->nextIdentity(), $product, $item['quantity']);
             }
 
             $this->cartRepository->save($cart);
@@ -111,18 +124,18 @@ class CreateCartCommandHandler
      * producto quedan juntas, y volver a bloquear una fila que ya tiene esta
      * misma transacción no cuesta nada.
      *
-     * @param array<int, array{productId: ProductId, quantity: Quantity}> $items
+     * @param list<array{productId: ProductId, quantity: Quantity}> $items
      *
-     * @return array<int, array{productId: ProductId, quantity: Quantity}>
+     * @return list<array{productId: ProductId, quantity: Quantity}>
      */
     private function inLockOrder(array $items): array
     {
         usort(
             $items,
-            static fn (array $a, array $b): int => strcmp(
+            static fn(array $a, array $b): int => strcmp(
                 $a['productId']->toString(),
-                $b['productId']->toString()
-            )
+                $b['productId']->toString(),
+            ),
         );
 
         return $items;

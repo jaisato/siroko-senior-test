@@ -1,20 +1,40 @@
 <?php
+
+declare(strict_types=1);
+
+use Doctrine\DBAL\Platforms\SqlitePlatform;
+use Doctrine\ORM\EntityManagerInterface;
+use Doctrine\ORM\Tools\SchemaTool;
+use Siroko\Kernel;
 use Symfony\Component\Dotenv\Dotenv;
 
-require dirname(__DIR__).'/vendor/autoload.php';
+require dirname(__DIR__) . '/vendor/autoload.php';
 
+// The test environment is not negotiable from the outside; the database is.
 $_SERVER['APP_ENV'] = $_ENV['APP_ENV'] = 'test';
 $_SERVER['APP_DEBUG'] = $_ENV['APP_DEBUG'] = '0';
-$_SERVER['SYMFONY_DEPRECATIONS_HELPER'] = 'verbose';
 putenv('APP_ENV=test');
 putenv('APP_DEBUG=0');
-putenv('SYMFONY_DEPRECATIONS_HELPER=verbose');
 
-$dotenv = new Dotenv();
-$dotenv->usePutenv(true)->bootEnv(dirname(__DIR__).'/.env');
+// Loads .env then .env.test; a DATABASE_URL already present in the process
+// environment (CI's MySQL service) is left untouched.
+(new Dotenv())->usePutenv(true)->bootEnv(dirname(__DIR__) . '/.env');
 
-if (!getenv('DATABASE_URL')) {
-    $dsn = 'mysql://root:sVlPsF32847@db:3306/siroko_cart?serverVersion=8.0.43&charset=utf8mb4';
-    putenv('DATABASE_URL='.$dsn);
-    $_ENV['DATABASE_URL'] = $_SERVER['DATABASE_URL'] = $dsn;
+// Against SQLite the schema is created from the mapping, since the migrations
+// are MySQL SQL. Against anything else the database is expected to be migrated
+// already (`doctrine:migrations:migrate --env=test`), which is exactly what CI
+// wants to exercise.
+$kernel = new Kernel('test', false);
+$kernel->boot();
+
+/** @var EntityManagerInterface $em */
+$em = $kernel->getContainer()->get('doctrine.orm.entity_manager');
+
+if ($em->getConnection()->getDatabasePlatform() instanceof SqlitePlatform) {
+    $schemaTool = new SchemaTool($em);
+    $schemaTool->dropDatabase();
+    $schemaTool->createSchema($em->getMetadataFactory()->getAllMetadata());
 }
+
+$em->getConnection()->close();
+$kernel->shutdown();

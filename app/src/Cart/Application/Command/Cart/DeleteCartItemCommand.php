@@ -1,45 +1,49 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Siroko\Cart\Application\Command\Cart;
 
+use Siroko\Cart\Domain\Exception\InvalidCustomerIdException;
+use Siroko\Cart\Domain\Exception\InvalidIdentifierException;
 use Siroko\Cart\Domain\ValueObject\CartId;
+use Siroko\Cart\Domain\ValueObject\CustomerId;
 use Siroko\Cart\Domain\ValueObject\ItemId;
 
-class DeleteCartItemCommand
+final class DeleteCartItemCommand
 {
-    /**
-     * @var CartId
-     */
-    private CartId $cartId;
+    private readonly CartId $cartId;
+
+    private readonly ItemId $itemId;
+
+    private readonly ?CustomerId $customerId;
 
     /**
-     * @var ItemId
+     * @throws InvalidIdentifierException
+     * @throws InvalidCustomerIdException
      */
-    private ItemId $itemId;
-
-    /**
-     * @param string $cartId
-     * @param string $itemId
-     */
-    public function __construct(string $cartId, string $itemId)
+    public function __construct(string $cartId, string $itemId, ?string $customerId = null)
     {
         $this->cartId = CartId::fromString($cartId);
         $this->itemId = ItemId::fromString($itemId);
+        $this->customerId = null === $customerId ? null : CustomerId::fromString($customerId);
     }
 
-    /**
-     * @return CartId
-     */
     public function cartId(): CartId
     {
         return $this->cartId;
     }
 
-    /**
-     * @return ItemId
-     */
     public function itemId(): ItemId
     {
         return $this->itemId;
+    }
+
+    /**
+     * The authenticated caller, when the API authenticates; null otherwise.
+     */
+    public function customer(): ?CustomerId
+    {
+        return $this->customerId;
     }
 }

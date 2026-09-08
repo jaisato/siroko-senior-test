@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Siroko\Cart\Domain\Exception;
 
 /**
@@ -11,6 +13,4 @@ namespace Siroko\Cart\Domain\Exception;
  * happened, and reads like the request was malformed when it was perfectly
  * well formed and simply arrived too late.
  */
-class OutOfStockException extends \DomainException
-{
-}
+class OutOfStockException extends \DomainException {}

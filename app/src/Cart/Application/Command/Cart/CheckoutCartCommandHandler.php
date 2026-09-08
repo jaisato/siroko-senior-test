@@ -1,28 +1,33 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Siroko\Cart\Application\Command\Cart;
 
-use Brick\Money\Exception\UnknownCurrencyException;
+use Psr\Clock\ClockInterface;
+use Siroko\Cart\Application\Dto\Cart\CheckoutRead;
+use Siroko\Cart\Domain\Entity\Order;
+use Siroko\Cart\Domain\Event\CartCheckedOut;
+use Siroko\Cart\Domain\Event\DomainEventPublisher;
+use Siroko\Cart\Domain\Exception\CartNotFoundException;
+use Siroko\Cart\Domain\Exception\EmptyCartException;
 use Siroko\Cart\Domain\Exception\InvalidCartStatusException;
 use Siroko\Cart\Domain\Repository\CartRepository;
+use Siroko\Cart\Domain\Repository\OrderRepository;
 use Siroko\Cart\Domain\Transaction\TransactionalSession;
-use Siroko\Cart\Domain\ValueObject\CartStatus;
-use Siroko\Cart\Infrastructure\Api\Dto\Cart\CartRead;
-use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
-class CheckoutCartCommandHandler
+final class CheckoutCartCommandHandler
 {
-    /**
-     * @param CartRepository $cartRepository
-     */
     public function __construct(
         private readonly CartRepository $cartRepository,
+        private readonly OrderRepository $orderRepository,
         private readonly TransactionalSession $session,
-    ) {
-    }
+        private readonly ClockInterface $clock,
+        private readonly DomainEventPublisher $events,
+    ) {}
 
     /**
-     * Pasa el carrito a pagado.
+     * Pasa el carrito a pagado y deja constancia del pedido.
      *
      * Comprobar el estado y escribirlo van en una transacción y sobre la fila
      * bloqueada. Leyendo sin bloqueo, dos checkouts simultáneos leían los dos
@@ -31,34 +36,44 @@ class CheckoutCartCommandHandler
      * carrito pagado que aún contenía la línea y el borrado devolvía después
      * al stock una unidad ya vendida.
      *
-     * @param CheckoutCartCommand $command
-     * @return CartRead
-     * @throws UnknownCurrencyException
-     * @throws InvalidCartStatusException
+     * The order is written in the same transaction as the status change: a
+     * paid cart without its order, or an order for a cart still pending, is a
+     * state nothing downstream can make sense of. The `CartCheckedOut` event
+     * joins them: publishing it puts it on the queue there and then, and the
+     * queue is a table on this same connection, so the row is part of this
+     * transaction. Committing publishes it; rolling back takes it with
+     * everything else. Handing it to the queue after the handler returned -
+     * which is what the bus middleware used to do - left the checkout
+     * committed and the confirmation still unqueued, and a process that died
+     * in between sold an order nobody would ever be told about.
+     *
+     * @throws CartNotFoundException
+     * @throws InvalidCartStatusException when the cart was already checked out
+     * @throws EmptyCartException         when the cart has no lines
      */
-    public function __invoke(CheckoutCartCommand $command): CartRead
+    public function __invoke(CheckoutCartCommand $command): CheckoutRead
     {
-        return $this->session->executeAtomically(function () use ($command): CartRead {
+        return $this->session->executeAtomically(function () use ($command): CheckoutRead {
             $cart = $this->cartRepository->ofIdForUpdate($command->cartId());
 
-            if ($cart === null) {
-                throw new NotFoundHttpException("Cart not found");
+            if (null === $cart) {
+                throw CartNotFoundException::withId($command->cartId());
             }
 
-            if ($cart->status()->toInt() !== CartStatus::PENDING) {
-                // A bare LogicException carries no domain meaning, and
-                // ApiExceptionMapper looks the class up exactly - so checking
-                // out a cart twice took the unexpected-error path and answered
-                // 500, while the 409 the mapper declares for this case never
-                // fired.
-                throw new InvalidCartStatusException("Cart is not pending");
-            }
+            $cart->ensureAccessibleBy($command->customer());
 
-            $cart->setStatus(new CartStatus(CartStatus::PAID));
+            // The entity refuses to be paid twice, and to be paid for nothing;
+            // the mapper turns both refusals into a 409.
+            $cart->pay();
+
+            $order = Order::place($this->orderRepository->nextIdentity(), $cart, $this->clock->now());
 
             $this->cartRepository->save($cart);
+            $this->orderRepository->save($order);
 
-            return CartRead::fromModel($cart);
+            $this->events->publish(CartCheckedOut::fromOrder($order));
+
+            return CheckoutRead::fromModels($cart, $order);
         });
     }
 }

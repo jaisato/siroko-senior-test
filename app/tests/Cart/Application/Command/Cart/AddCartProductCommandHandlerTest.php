@@ -1,14 +1,23 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Siroko\Tests\Cart\Application\Command\Cart;
 
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Ramsey\Uuid\Uuid;
 use Siroko\Cart\Application\Command\Cart\AddCartProductCommand;
 use Siroko\Cart\Application\Command\Cart\AddCartProductCommandHandler;
 use Siroko\Cart\Domain\Entity\Cart;
+use Siroko\Cart\Domain\Entity\CartItem;
 use Siroko\Cart\Domain\Entity\Product;
+use Siroko\Cart\Domain\Exception\CartNotFoundException;
+use Siroko\Cart\Domain\Exception\InvalidCartStatusException;
+use Siroko\Cart\Domain\Exception\InvalidIdentifierException;
+use Siroko\Cart\Domain\Exception\InvalidQuantityException;
 use Siroko\Cart\Domain\Exception\OutOfStockException;
+use Siroko\Cart\Domain\Exception\ProductNotFoundException;
 use Siroko\Cart\Domain\Repository\CartItemRepository;
 use Siroko\Cart\Domain\Repository\CartRepository;
 use Siroko\Cart\Domain\Repository\ProductRepository;
@@ -20,7 +29,6 @@ use Siroko\Cart\Domain\ValueObject\Price;
 use Siroko\Cart\Domain\ValueObject\ProductCode;
 use Siroko\Cart\Domain\ValueObject\ProductId;
 use Siroko\Cart\Domain\ValueObject\Quantity;
-use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
 /**
  * Reservar stock tiene que ser un ajuste relativo y condicional.
@@ -35,6 +43,8 @@ final class AddCartProductCommandHandlerTest extends TestCase
 {
     private RecordingSession $session;
 
+    private Cart $cart;
+
     protected function setUp(): void
     {
         $this->session = new RecordingSession();
@@ -47,9 +57,12 @@ final class AddCartProductCommandHandlerTest extends TestCase
 
         $handler = $this->handler($product, $reserved, available: true);
 
-        $handler(new AddCartProductCommand($this->cartId(), $product->id()->toString()));
+        $read = $handler(new AddCartProductCommand($this->cartId(), $product->id()->toString()));
 
         self::assertSame([[$product->id()->toString(), 1]], $reserved);
+        self::assertCount(1, $this->cart->items());
+        self::assertSame($this->cart->id()->toString(), $read->id);
+        self::assertCount(1, $read->items);
     }
 
     /**
@@ -95,7 +108,7 @@ final class AddCartProductCommandHandlerTest extends TestCase
         $handler(new AddCartProductCommand($this->cartId(), $product->id()->toString()));
 
         self::assertSame(1, $this->session->transactions);
-        self::assertSame(['begin', 'lockCart', 'reserveStock', 'saveCart', 'commit'], $this->session->log);
+        self::assertSame(['begin', 'lockCart', 'lockProduct', 'reserveStock', 'saveCart', 'commit'], $this->session->log);
     }
 
     /**
@@ -118,22 +131,177 @@ final class AddCartProductCommandHandlerTest extends TestCase
         $handler(new AddCartProductCommand($this->cartId(), $product->id()->toString()));
 
         self::assertSame(
-            ['begin', 'lockCart', 'reserveStock'],
-            array_slice($this->session->log, 0, 3),
+            ['begin', 'lockCart', 'lockProduct', 'reserveStock'],
+            \array_slice($this->session->log, 0, 4),
             'the cart lock is taken first, and inside the transaction',
         );
     }
 
-    public function test_an_unknown_cart_is_a_404(): void
+    /**
+     * A withdrawal that commits while the request is in flight is the 404 it
+     * would have been a moment earlier, not a 409 about stock.
+     *
+     * The product is read once without a lock - that read answers an id that
+     * names nothing before a transaction is opened - and a withdrawal
+     * committing after it used to reach `reserveStock()`, whose UPDATE carries
+     * `deleted_at IS NULL`. It changed no rows, zero rows read as "not enough
+     * units", and the client was told the stock was short about a product that
+     * was no longer for sale: the wrong status, the wrong reason, and an
+     * invitation to retry something that could never work. Reading the row
+     * again under its own lock - after the cart's, the order every writer here
+     * takes - answers it for what it is.
+     */
+    public function test_a_product_withdrawn_after_the_first_read_is_not_found(): void
+    {
+        $reserved = [];
+        $product = $this->product(quantity: 4);
+
+        $handler = $this->handler($product, $reserved, available: true, withdrawnUnderTheLock: true);
+
+        try {
+            $handler(new AddCartProductCommand($this->cartId(), $product->id()->toString()));
+            self::fail('expected an exception');
+        } catch (ProductNotFoundException $notFound) {
+            self::assertStringContainsString($product->id()->toString(), $notFound->getMessage());
+        }
+
+        self::assertSame([], $reserved, 'no stock was reserved');
+        self::assertSame(['begin', 'lockCart', 'lockProduct'], $this->session->log, 'and the reservation was never attempted');
+        self::assertCount(0, $this->cart->items());
+    }
+
+    public function test_an_unknown_cart_is_not_found(): void
     {
         $reserved = [];
         $product = $this->product(quantity: 4);
 
         $handler = $this->handler($product, $reserved, available: true, cartExists: false);
 
-        $this->expectException(NotFoundHttpException::class);
+        $this->expectException(CartNotFoundException::class);
 
         $handler(new AddCartProductCommand($this->cartId(), $product->id()->toString()));
+    }
+
+    public function test_an_unknown_product_is_not_found_before_any_lock_is_taken(): void
+    {
+        $reserved = [];
+        $handler = $this->handler(null, $reserved, available: true);
+
+        try {
+            $handler(new AddCartProductCommand($this->cartId(), Uuid::uuid4()->toString()));
+            self::fail('expected an exception');
+        } catch (ProductNotFoundException) {
+        }
+
+        self::assertSame(0, $this->session->transactions, 'no transaction was opened');
+        self::assertSame([], $reserved);
+    }
+
+    /**
+     * Adding to a paid cart reserved a unit nothing could ever release: the
+     * removal path refuses to return stock for a cart that is not pending. The
+     * status is checked under the row lock, before any stock moves.
+     */
+    public function test_a_cart_that_is_no_longer_pending_is_refused_before_reserving_stock(): void
+    {
+        $reserved = [];
+        $product = $this->product(quantity: 4);
+
+        $handler = $this->handler($product, $reserved, available: true, cartStatus: CartStatus::PAID);
+
+        try {
+            $handler(new AddCartProductCommand($this->cartId(), $product->id()->toString()));
+            self::fail('expected an exception');
+        } catch (InvalidCartStatusException) {
+        }
+
+        self::assertSame([], $reserved, 'no stock was reserved for a paid cart');
+        self::assertSame(['begin', 'lockCart'], $this->session->log, 'the status was read under the lock');
+        self::assertCount(0, $this->cart->items());
+    }
+
+    public function test_the_command_validates_its_identifiers(): void
+    {
+        $this->expectException(InvalidIdentifierException::class);
+
+        new AddCartProductCommand('not-a-uuid', Uuid::uuid4()->toString());
+    }
+
+    /** Several units in one request are one reservation, not several rows. */
+    public function test_several_units_are_reserved_at_once_on_a_single_line(): void
+    {
+        $reserved = [];
+        $product = $this->product(quantity: 10);
+
+        $handler = $this->handler($product, $reserved, available: true);
+
+        $read = $handler(new AddCartProductCommand($this->cartId(), $product->id()->toString(), 4));
+
+        self::assertSame([[$product->id()->toString(), 4]], $reserved);
+        self::assertCount(1, $this->cart->items());
+        self::assertSame(4, $read->items[0]->quantity);
+    }
+
+    /**
+     * A product the cart already holds grows its line. With one row per unit
+     * a client had to remove units one by one, each by its own id.
+     */
+    public function test_adding_a_product_already_in_the_cart_grows_its_line(): void
+    {
+        $reserved = [];
+        $product = $this->product(quantity: 10);
+
+        $handler = $this->handler($product, $reserved, available: true);
+        $existing = new CartItem(ItemId::fromString(Uuid::uuid4()->toString()), $product, new Quantity(2));
+        $this->cart->addItem($existing);
+
+        $read = $handler(new AddCartProductCommand($this->cartId(), $product->id()->toString(), 3));
+
+        self::assertCount(1, $this->cart->items(), 'no second line for the same product');
+        self::assertSame(5, $existing->quantity()->asInt());
+        self::assertSame([[$product->id()->toString(), 3]], $reserved, 'only the new units were reserved');
+        self::assertSame($existing->id()->toString(), $read->items[0]->id);
+    }
+
+    /** The per-line cap is a rule of the line; the request over it is a 400, and nothing is kept. */
+    public function test_a_line_cannot_grow_past_what_one_line_holds(): void
+    {
+        $reserved = [];
+        $product = $this->product(quantity: 500);
+
+        $handler = $this->handler($product, $reserved, available: true);
+        $this->cart->addItem(new CartItem(ItemId::fromString(Uuid::uuid4()->toString()), $product, new Quantity(CartItem::MAX_QUANTITY)));
+
+        $this->expectException(InvalidQuantityException::class);
+
+        $handler(new AddCartProductCommand($this->cartId(), $product->id()->toString(), 1));
+    }
+
+    #[DataProvider('quantitiesALineRefuses')]
+    public function test_the_command_refuses_quantities_a_line_cannot_hold(int|string $quantity): void
+    {
+        $this->expectException(InvalidQuantityException::class);
+
+        new AddCartProductCommand(Uuid::uuid4()->toString(), Uuid::uuid4()->toString(), $quantity);
+    }
+
+    /**
+     * @return iterable<string, array{int|string}>
+     */
+    public static function quantitiesALineRefuses(): iterable
+    {
+        yield 'zero' => [0];
+        yield 'negative' => [-1];
+        yield 'over the cap' => [CartItem::MAX_QUANTITY + 1];
+        yield 'not a number' => ['two'];
+    }
+
+    public function test_the_command_defaults_to_one_unit(): void
+    {
+        $command = new AddCartProductCommand(Uuid::uuid4()->toString(), Uuid::uuid4()->toString());
+
+        self::assertSame(1, $command->quantity()->asInt());
+        self::assertSame(3, (new AddCartProductCommand(Uuid::uuid4()->toString(), Uuid::uuid4()->toString(), '3'))->quantity()->asInt(), 'numeric strings are understood');
     }
 
     private function cartId(): string
@@ -141,20 +309,20 @@ final class AddCartProductCommandHandlerTest extends TestCase
         return $this->cart->id()->toString();
     }
 
-    private Cart $cart;
-
     /**
      * @param list<array{0:string,1:int}> $reserved
      */
     private function handler(
-        Product $product,
+        ?Product $product,
         array &$reserved,
         bool $available,
         bool $cartExists = true,
+        int $cartStatus = CartStatus::PENDING,
+        bool $withdrawnUnderTheLock = false,
     ): AddCartProductCommandHandler {
         $this->cart = new Cart(
             CartId::fromString(Uuid::uuid4()->toString()),
-            new CartStatus(CartStatus::PENDING),
+            new CartStatus($cartStatus),
         );
 
         $carts = $this->createStub(CartRepository::class);
@@ -163,11 +331,11 @@ final class AddCartProductCommandHandlerTest extends TestCase
                 $this->session->log[] = 'lockCart';
 
                 return $cartExists ? $this->cart : null;
-            }
+            },
         );
         // El camino sin bloqueo no debe usarse.
         $carts->method('ofId')->willReturnCallback(
-            static fn () => self::fail('the cart must be loaded with its row locked')
+            static fn() => self::fail('the cart must be loaded with its row locked'),
         );
         $carts->method('save')->willReturnCallback(function (): void {
             $this->session->log[] = 'saveCart';
@@ -175,8 +343,15 @@ final class AddCartProductCommandHandlerTest extends TestCase
 
         $products = $this->createStub(ProductRepository::class);
         $products->method('ofId')->willReturn($product);
+        $products->method('ofIdForUpdate')->willReturnCallback(
+            function () use ($product, $withdrawnUnderTheLock): ?Product {
+                $this->session->log[] = 'lockProduct';
+
+                return $withdrawnUnderTheLock ? null : $product;
+            },
+        );
         $products->method('reserveStock')->willReturnCallback(
-            function ($id, int $units) use (&$reserved, $available): bool {
+            function (ProductId $id, int $units) use (&$reserved, $available): bool {
                 $this->session->log[] = 'reserveStock';
                 if (!$available) {
                     return false;
@@ -184,15 +359,15 @@ final class AddCartProductCommandHandlerTest extends TestCase
                 $reserved[] = [$id->toString(), $units];
 
                 return true;
-            }
+            },
         );
         $products->method('save')->willReturnCallback(
-            static fn () => self::fail('stock must not be written back as an absolute value')
+            static fn() => self::fail('stock must not be written back as an absolute value'),
         );
 
         $items = $this->createStub(CartItemRepository::class);
         $items->method('nextIdentity')->willReturnCallback(
-            static fn () => ItemId::fromString(Uuid::uuid4()->toString())
+            static fn() => ItemId::fromString(Uuid::uuid4()->toString()),
         );
 
         return new AddCartProductCommandHandler($carts, $products, $items, $this->session);
@@ -202,8 +377,8 @@ final class AddCartProductCommandHandlerTest extends TestCase
     {
         return new Product(
             ProductId::fromString(Uuid::uuid4()->toString()),
-            new ProductCode('ABC123'),
-            new Name('A product'),
+            ProductCode::fromString('ABC123'),
+            Name::fromString('A product'),
             Price::of('10.00', 'EUR'),
             new Quantity($quantity),
         );

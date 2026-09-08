@@ -1,14 +1,33 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Siroko\Cart\Infrastructure\Api;
 
+use Doctrine\DBAL\Exception\UniqueConstraintViolationException;
 use Psr\Log\LoggerInterface;
+use Siroko\Cart\Domain\Exception\CartItemNotFoundException;
+use Siroko\Cart\Domain\Exception\CartNotFoundException;
+use Siroko\Cart\Domain\Exception\CartIsFullException;
+use Siroko\Cart\Domain\Exception\DuplicateProductCodeException;
+use Siroko\Cart\Domain\Exception\EmptyCartException;
+use Siroko\Cart\Domain\Exception\InvalidCartLineException;
 use Siroko\Cart\Domain\Exception\InvalidCartStatusException;
+use Siroko\Cart\Domain\Exception\InvalidCustomerIdException;
+use Siroko\Cart\Domain\Exception\InvalidIdentifierException;
+use Siroko\Cart\Domain\Exception\InvalidPriceException;
 use Siroko\Cart\Domain\Exception\InvalidProductCodeException;
+use Siroko\Cart\Domain\Exception\InvalidProductCriteriaException;
+use Siroko\Cart\Domain\Exception\InvalidProductUpdateException;
 use Siroko\Cart\Domain\Exception\InvalidQuantityException;
+use Siroko\Cart\Domain\Exception\InvalidStockAdjustmentException;
 use Siroko\Cart\Domain\Exception\NameInvalidLengthException;
+use Siroko\Cart\Domain\Exception\OrderNotFoundException;
 use Siroko\Cart\Domain\Exception\OutOfStockException;
 use Siroko\Cart\Domain\Exception\PriceIsNotSameCurrencyException;
+use Siroko\Cart\Domain\Exception\ProductIsInAPendingCartException;
+use Siroko\Cart\Domain\Exception\ProductNotFoundException;
+use Symfony\Component\HttpFoundation\Exception\RequestExceptionInterface;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
@@ -20,21 +39,30 @@ use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
  * `['exception' => $e->getMessage()]` with HTTP 500. That was wrong in two
  * separate ways:
  *
- * - The status code was 500 for everything. Handlers already throw
- *   NotFoundHttpException for a cart or product that does not exist, and the
- *   domain throws its own exceptions for a rejected quantity or a cart that is
- *   already checked out - all of which reached the client as "the server
- *   broke". A caller could not tell a bad request from an outage, and no client
- *   or monitor could act on the difference.
+ * - The status code was 500 for everything. The domain throws its own
+ *   exceptions for a cart that does not exist, a rejected quantity or a cart
+ *   that is already checked out - all of which reached the client as "the
+ *   server broke". A caller could not tell a bad request from an outage, and no
+ *   client or monitor could act on the difference.
  * - The message was echoed verbatim. For an unexpected failure that message is
  *   whatever the ORM, the driver or the queue produced: SQL fragments, file
  *   paths, host names, and in the case of a connection failure the DSN itself.
  *
  * Deliberate exceptions carry their own status and a message written to be
- * read. Anything else is a bug, and its message stays in the log.
+ * read. Anything else is a bug, and its message stays in the log - which is
+ * why the logger is not optional: the controllers catch everything, so the
+ * kernel's own error listener never sees these exceptions, and this is the
+ * only record a 500 leaves.
+ *
+ * The body follows RFC 7807 (`application/problem+json`): `type`, `title`,
+ * `status` and `detail`. API Platform answers the errors it raises itself -
+ * unknown route, wrong method, unacceptable format - in the same shape, so a
+ * client has one error contract for the whole API.
  */
 final class ApiExceptionMapper
 {
+    public const CONTENT_TYPE = 'application/problem+json';
+
     /**
      * Domain exceptions the API can report as a rejected request rather than a
      * failure. The domain raises them for input it will not accept, so they are
@@ -43,40 +71,83 @@ final class ApiExceptionMapper
      * @var array<class-string<\Throwable>, int>
      */
     private const DOMAIN_STATUS = [
-        InvalidCartStatusException::class      => Response::HTTP_CONFLICT,
-        InvalidQuantityException::class        => Response::HTTP_BAD_REQUEST,
-        InvalidProductCodeException::class     => Response::HTTP_BAD_REQUEST,
-        NameInvalidLengthException::class      => Response::HTTP_BAD_REQUEST,
-        OutOfStockException::class             => Response::HTTP_CONFLICT,
-        PriceIsNotSameCurrencyException::class => Response::HTTP_BAD_REQUEST,
+        CartNotFoundException::class => Response::HTTP_NOT_FOUND,
+        CartItemNotFoundException::class => Response::HTTP_NOT_FOUND,
+        ProductNotFoundException::class => Response::HTTP_NOT_FOUND,
+        OrderNotFoundException::class => Response::HTTP_NOT_FOUND,
+        InvalidCartStatusException::class => Response::HTTP_CONFLICT,
+        EmptyCartException::class => Response::HTTP_CONFLICT,
+        OutOfStockException::class => Response::HTTP_CONFLICT,
+        DuplicateProductCodeException::class => Response::HTTP_CONFLICT,
+        // The request is well formed; it clashes with the currency the cart
+        // already holds, which is the cart's state, hence a conflict.
+        PriceIsNotSameCurrencyException::class => Response::HTTP_CONFLICT,
+        // Same reasoning: the payload is fine, the cart is what will not take
+        // it, and what resolves it is a line removed or a checkout.
+        CartIsFullException::class => Response::HTTP_CONFLICT,
+        // Also the cart's state, seen from the product side.
+        ProductIsInAPendingCartException::class => Response::HTTP_CONFLICT,
+        InvalidCartLineException::class => Response::HTTP_BAD_REQUEST,
+        InvalidCustomerIdException::class => Response::HTTP_BAD_REQUEST,
+        InvalidProductCriteriaException::class => Response::HTTP_BAD_REQUEST,
+        InvalidProductUpdateException::class => Response::HTTP_BAD_REQUEST,
+        InvalidStockAdjustmentException::class => Response::HTTP_BAD_REQUEST,
+        InvalidIdentifierException::class => Response::HTTP_BAD_REQUEST,
+        InvalidPriceException::class => Response::HTTP_BAD_REQUEST,
+        InvalidQuantityException::class => Response::HTTP_BAD_REQUEST,
+        InvalidProductCodeException::class => Response::HTTP_BAD_REQUEST,
+        NameInvalidLengthException::class => Response::HTTP_BAD_REQUEST,
     ];
 
-    public function __construct(private readonly ?LoggerInterface $logger = null)
-    {
-    }
+    public function __construct(private readonly LoggerInterface $logger) {}
 
     public function toResponse(\Throwable $e): JsonResponse
     {
         if ($e instanceof HttpExceptionInterface) {
-            return $this->error($e->getMessage(), $e->getStatusCode(), $e->getHeaders());
+            return $this->problem($e->getMessage(), $e->getStatusCode(), $e->getHeaders());
+        }
+
+        // HttpFoundation's own complaints about the request (a query value the
+        // InputBag cannot parse, a malformed header) are the caller's problem;
+        // the kernel answers 400 for them and so does the API.
+        if ($e instanceof RequestExceptionInterface) {
+            return $this->problem('The request is malformed.', Response::HTTP_BAD_REQUEST);
         }
 
         $status = self::DOMAIN_STATUS[$e::class] ?? null;
 
-        if ($status !== null) {
-            return $this->error($e->getMessage(), $status);
+        if (null !== $status) {
+            return $this->problem($e->getMessage(), $status);
         }
 
-        $this->logger?->error('Unhandled API exception', ['exception' => $e]);
+        // The handler checks the code before inserting, but two requests can
+        // pass that check at the same time; the unique index then rejects the
+        // second insert with a driver exception. That race is still a conflict
+        // the caller can understand, not a failure of the service.
+        if ($e instanceof UniqueConstraintViolationException) {
+            return $this->problem('A resource with the same unique key already exists.', Response::HTTP_CONFLICT);
+        }
 
-        return $this->error('An unexpected error occurred.', Response::HTTP_INTERNAL_SERVER_ERROR);
+        // The exception travels as context, so the formatter writes its class,
+        // message, location and - in prod, where stack traces are switched on -
+        // its trace, none of which the client gets to see.
+        $this->logger->error('Unhandled API exception', ['exception' => $e]);
+
+        return $this->problem('An unexpected error occurred.', Response::HTTP_INTERNAL_SERVER_ERROR);
     }
 
     /**
-     * @param array<string,string> $headers
+     * @param array<string, string> $headers
      */
-    private function error(string $message, int $status, array $headers = []): JsonResponse
+    private function problem(string $detail, int $status, array $headers = []): JsonResponse
     {
-        return new JsonResponse(['error' => ['status' => $status, 'message' => $message]], $status, $headers);
+        $body = [
+            'type' => 'about:blank',
+            'title' => Response::$statusTexts[$status] ?? 'Error',
+            'status' => $status,
+            'detail' => $detail,
+        ];
+
+        return new JsonResponse($body, $status, $headers + ['Content-Type' => self::CONTENT_TYPE]);
     }
 }

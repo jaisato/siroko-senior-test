@@ -1,16 +1,13 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Siroko\Cart\Domain\ValueObject;
 
 use Siroko\Cart\Domain\Exception\DateIsNotValid;
 use Siroko\Cart\Domain\Exception\DateTimeIsNotValid;
 use Siroko\Cart\Domain\Exception\TimeIsNotValid;
-use DateTimeImmutable;
-use DateTimeInterface;
-use DateTimeZone;
-use Throwable;
 
-use function strtotime;
 use function time;
 
 final class DateTime
@@ -40,30 +37,23 @@ final class DateTime
         int $day,
         int $hour,
         int $minutes,
-        int $seconds
+        int $seconds,
     ): self {
         try {
             return new self(
                 Date::createFromYearMonthAndDay(
                     $year,
                     $month,
-                    $day
+                    $day,
                 ),
                 Time::createFromHourMinutesAndSeconds(
                     $hour,
                     $minutes,
-                    $seconds
-                )
+                    $seconds,
+                ),
             );
-        } catch (DateIsNotValid | TimeIsNotValid $e) {
-            throw DateTimeIsNotValid::becauseDateAndTimeComponentsAreNotValid(
-                $year,
-                $month,
-                $day,
-                $hour,
-                $minutes,
-                $seconds
-            );
+        } catch (DateIsNotValid|TimeIsNotValid $e) {
+            throw DateTimeIsNotValid::becauseDateAndTimeComponentsAreNotValid($year, $month, $day, $hour, $minutes, $seconds);
         }
     }
 
@@ -71,11 +61,11 @@ final class DateTime
     {
         return new self(
             $date,
-            $time
+            $time,
         );
     }
 
-    public static function createFromDateTime(DateTimeInterface $dateTime): self
+    public static function createFromDateTime(\DateTimeInterface $dateTime): self
     {
         return self::createFromDateAndTime(
             Date::createFromDateTime($dateTime),
@@ -90,12 +80,12 @@ final class DateTime
     {
         try {
             return self::createFromDateTime(
-                new DateTimeImmutable(
+                new \DateTimeImmutable(
                     $dateTime,
-                    new DateTimeZone(Date::TIMEZONE)
-                )
+                    new \DateTimeZone(Date::TIMEZONE),
+                ),
             );
-        } catch (Throwable $e) {
+        } catch (\Throwable $e) {
             throw DateTimeIsNotValid::becauseDateTimeFormatIsNotValid($dateTime);
         }
     }
@@ -105,15 +95,18 @@ final class DateTime
      */
     public static function createFromFormat(string $dateTime, string $format = self::FORMAT_DATETIME_EUROPE): self
     {
+        // `createFromFormat()` returns false for a value that does not match the
+        // format instead of throwing; the old catch-all never saw it and the
+        // false went on to `createFromDateTime()` as a TypeError.
+        $parsed = \DateTimeImmutable::createFromFormat($format, $dateTime, new \DateTimeZone(Date::TIMEZONE));
+
+        if (false === $parsed) {
+            throw DateTimeIsNotValid::becauseDateTimeFormatIsNotValid($dateTime);
+        }
+
         try {
-            return self::createFromDateTime(
-                DateTimeImmutable::createFromFormat(
-                    $format,
-                    $dateTime,
-                    new DateTimeZone(Date::TIMEZONE)
-                )
-            );
-        } catch (Throwable $e) {
+            return self::createFromDateTime($parsed);
+        } catch (\Throwable $e) {
             throw DateTimeIsNotValid::becauseDateTimeFormatIsNotValid($dateTime);
         }
     }
@@ -123,7 +116,7 @@ final class DateTime
      */
     public static function createFromFormatOrNull(?string $dateTime, string $format): ?self
     {
-        if ($dateTime === null) {
+        if (null === $dateTime) {
             return null;
         }
 
@@ -135,17 +128,12 @@ final class DateTime
      */
     public static function createFromTimestamp(int $timestamp): self
     {
-        try {
-            return self::createFromDateTime(
-                DateTimeImmutable::createFromFormat(
-                    'U',
-                    (string) $timestamp,
-                    new DateTimeZone(Date::TIMEZONE)
-                )
-            );
-        } catch (Throwable $e) {
-            throw DateTimeIsNotValid::becauseDateTimeFormatIsNotValid((string) $timestamp);
-        }
+        // `createFromFormat('U', ...)` ignores the time zone argument and yields
+        // UTC, so the components read off it were two hours off the value the
+        // rest of this class produces; the instant has to be converted.
+        return self::createFromDateTime(
+            (new \DateTimeImmutable('@' . $timestamp))->setTimezone(new \DateTimeZone(Date::TIMEZONE)),
+        );
     }
 
     /**
@@ -153,7 +141,7 @@ final class DateTime
      */
     public static function createFromTimestampOrNull(?int $timestamp): ?self
     {
-        if ($timestamp === null || $timestamp === 0) {
+        if (null === $timestamp || 0 === $timestamp) {
             return null;
         }
 
@@ -165,21 +153,21 @@ final class DateTime
      */
     public static function createIn(string $modifier): self
     {
-        if (strtotime($modifier) === false) {
+        if (false === strtotime($modifier)) {
             throw DateTimeIsNotValid::becauseDateTimeFormatIsNotValid($modifier);
         }
 
         return self::createFromDateTime(
-            (new DateTimeImmutable('now', new DateTimeZone(Date::TIMEZONE)))
-                ->setTimestamp(time())
-                ->modify($modifier)
+            (new \DateTimeImmutable('now', new \DateTimeZone(Date::TIMEZONE)))
+                ->setTimestamp(\time())
+                ->modify($modifier),
         );
     }
 
     public static function now(): self
     {
         return self::createFromDateTime(
-            (new DateTimeImmutable('now', new DateTimeZone(Date::TIMEZONE)))->setTimestamp(time())
+            (new \DateTimeImmutable('now', new \DateTimeZone(Date::TIMEZONE)))->setTimestamp(\time()),
         );
     }
 
@@ -187,15 +175,15 @@ final class DateTime
     {
         return self::createFromDateTime(
             (
-            new DateTimeImmutable(
+            new \DateTimeImmutable(
                 'first day of last month',
-                new DateTimeZone(Date::TIMEZONE)
+                new \DateTimeZone(Date::TIMEZONE),
             )
             )->setTime(
-                    0,
-                    0,
-                    0
-                )
+                0,
+                0,
+                0,
+            ),
         );
     }
 
@@ -203,15 +191,15 @@ final class DateTime
     {
         return self::createFromDateTime(
             (
-            new DateTimeImmutable(
+            new \DateTimeImmutable(
                 'last day of last month',
-                new DateTimeZone(Date::TIMEZONE)
+                new \DateTimeZone(Date::TIMEZONE),
             )
             )->setTime(
-                    23,
-                    59,
-                    59
-                )
+                23,
+                59,
+                59,
+            ),
         );
     }
 
@@ -219,7 +207,7 @@ final class DateTime
     {
         return new self(
             $this->date,
-            Time::beginningOfDay()
+            Time::beginningOfDay(),
         );
     }
 
@@ -227,17 +215,17 @@ final class DateTime
     {
         return new self(
             $this->date,
-            Time::endOfDay()
+            Time::endOfDay(),
         );
     }
 
-    public function equalsTo(DateTime $anotherDateTime): bool
+    public function equalsTo(self $anotherDateTime): bool
     {
         return $this->date->equalsTo($anotherDateTime->date)
             && $this->time->equalsTo($anotherDateTime->time);
     }
 
-    public function isEarlierThan(DateTime $anotherDate): bool
+    public function isEarlierThan(self $anotherDate): bool
     {
         return $this->asDateTime() < $anotherDate->asDateTime();
     }
@@ -267,7 +255,7 @@ final class DateTime
         return $this->time->formatWithoutSeconds();
     }
 
-    public function asDateTime(): DateTimeInterface
+    public function asDateTime(): \DateTimeInterface
     {
         $dateTime = $this->date->asDateTime();
         $dateTime = $dateTime->setTime(

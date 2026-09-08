@@ -1,18 +1,32 @@
 api_platform:
     title: API Siroko
     version: 1.0.0
-    description: 'API de creación y listado de productos y carrito online'
+    description: |
+        Products and shopping carts: a catalogue to create, edit, restock and withdraw products from, and
+        carts that reserve stock while pending, are paid into an order, delivered or canceled.
+
+        Every error, whatever raised it, is an RFC 7807 problem (`application/problem+json`, schema
+        `Problem`). Each operation lists the statuses it can answer; two apply everywhere and are not
+        repeated: 401 on every `/v1` route when `API_TOKENS` is set and the request carries no valid token,
+        and 406/415 when content negotiation fails. `POST /v1/carts` and the add and checkout `PUT`s
+        accept an `Idempotency-Key` header for safe retries.
     enable_docs: true
     mapping:
         paths:
-            - '%kernel.project_dir%/src/Cart/Infrastructure/Api/Dto'
+            # Routing + OpenAPI metadata only; the read models live in Application.
+            - '%kernel.project_dir%/src/Cart/Infrastructure/Api/Resource'
+    # The PATCH endpoints read their own body (plain JSON), like every other
+    # write; without this entry API Platform answered 415 to `application/json`.
     patch_formats:
-        json: [ 'application/merge-patch+json' ]
+        json: [ 'application/merge-patch+json', 'application/json' ]
     formats:
         json: [ 'application/json' ]
         html: [ 'text/html' ]
+    # Errors raised outside our controllers (unknown route, wrong method,
+    # unacceptable format) use the same RFC 7807 media type as the ones the
+    # controllers map themselves, so there is one error contract for the API.
     error_formats:
-        json: [ 'application/json' ]
+        jsonproblem: [ 'application/problem+json' ]
     defaults:
         stateless: true
         cache_headers:

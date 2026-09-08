@@ -1,0 +1,252 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Siroko\Tests\Cart\Application\Command\Order;
+
+use PHPUnit\Framework\TestCase;
+use Ramsey\Uuid\Uuid;
+use Siroko\Cart\Application\Command\Order\SendOrderConfirmationCommand;
+use Siroko\Cart\Application\Command\Order\SendOrderConfirmationCommandHandler;
+use Siroko\Cart\Domain\Entity\Cart;
+use Siroko\Cart\Domain\Entity\CartItem;
+use Siroko\Cart\Domain\Entity\Order;
+use Siroko\Cart\Domain\Entity\Product;
+use Siroko\Cart\Domain\Exception\InvalidIdentifierException;
+use Siroko\Cart\Domain\Exception\OrderNotFoundException;
+use Siroko\Cart\Domain\Repository\OrderRepository;
+use Siroko\Cart\Domain\ValueObject\CartId;
+use Siroko\Cart\Domain\ValueObject\CartStatus;
+use Siroko\Cart\Domain\ValueObject\ItemId;
+use Siroko\Cart\Domain\ValueObject\Name;
+use Siroko\Cart\Domain\ValueObject\OrderId;
+use Siroko\Cart\Domain\ValueObject\Price;
+use Siroko\Cart\Domain\ValueObject\ProductCode;
+use Siroko\Cart\Domain\ValueObject\ProductId;
+use Siroko\Cart\Domain\ValueObject\Quantity;
+use Siroko\Tests\Cart\Application\Command\Cart\RecordingSession;
+use Symfony\Component\Clock\MockClock;
+
+/**
+ * The worker-side handler of `CartCheckedOut`. A queue redelivers, so it has
+ * to be safe to run twice for the same order.
+ */
+final class SendOrderConfirmationCommandHandlerTest extends TestCase
+{
+    private RecordingLogger $logger;
+
+    private RecordingSession $session;
+
+    private int $saves = 0;
+
+    protected function setUp(): void
+    {
+        $this->logger = new RecordingLogger();
+        $this->session = new RecordingSession();
+        $this->saves = 0;
+    }
+
+    public function test_it_confirms_the_order_at_the_clock_time_and_logs_it(): void
+    {
+        $order = $this->order();
+        $clock = new MockClock('2026-09-06 10:05:00', 'UTC');
+
+        $this->handler($order, $clock)(new SendOrderConfirmationCommand($order->id()->toString()));
+
+        self::assertTrue($order->isConfirmed());
+        self::assertSame('2026-09-06T10:05:00+00:00', $order->confirmedAt()?->format(\DateTimeInterface::RFC3339));
+        self::assertTrue($order->isConfirmationSent());
+        self::assertSame(2, $this->saves, 'the decision and the delivery are two writes');
+        self::assertCount(1, $this->logger->records);
+        self::assertSame('info', $this->logger->records[0]['level']);
+        self::assertStringContainsString('sent', $this->logger->records[0]['message']);
+        self::assertSame($order->id()->toString(), $this->logger->records[0]['context']['orderId']);
+        self::assertSame('20.00 EUR', $this->logger->records[0]['context']['total']);
+
+        // Decide and commit, look once more for a cancellation, send, record
+        // the send. The delivery sits between transactions rather than inside
+        // one: it cannot be rolled back, and a commit that failed over it told
+        // the customer something the row then denied. The middle read takes
+        // the lock and writes nothing - it is the last chance to notice that
+        // the purchase was called off after the decision committed.
+        self::assertSame(
+            [
+                'begin', 'lockOrder', 'saveOrder', 'commit',
+                'begin', 'lockOrder', 'commit',
+                'begin', 'lockOrder', 'saveOrder', 'commit',
+            ],
+            $this->session->log,
+        );
+    }
+
+    /** Redelivery: the first timestamp stands and nothing is written again. */
+    public function test_a_second_run_for_the_same_order_changes_nothing(): void
+    {
+        $order = $this->order();
+        $first = new MockClock('2026-09-06 10:05:00', 'UTC');
+        $second = new MockClock('2026-09-06 11:00:00', 'UTC');
+
+        $this->handler($order, $first)(new SendOrderConfirmationCommand($order->id()->toString()));
+        $this->handler($order, $second)(new SendOrderConfirmationCommand($order->id()->toString()));
+
+        self::assertSame('2026-09-06T10:05:00+00:00', $order->confirmedAt()?->format(\DateTimeInterface::RFC3339));
+        self::assertSame('2026-09-06T10:05:00+00:00', $order->confirmationSentAt()?->format(\DateTimeInterface::RFC3339));
+        self::assertSame(2, $this->saves, 'the second run did not write');
+        self::assertCount(2, $this->logger->records);
+        self::assertStringContainsString('nothing to do', $this->logger->records[1]['message']);
+        self::assertTrue($this->logger->records[1]['context']['sent']);
+        self::assertFalse($this->logger->records[1]['context']['canceled']);
+    }
+
+    /**
+     * The cancellation and this handler are two writers to one order row.
+     * Read unlocked, each decided on the state it had read: the cancellation
+     * set `canceled_at` while this handler, holding an order it had loaded as
+     * neither confirmed nor cancelled, set `confirmed_at` on top, and the
+     * customer was told a purchase they had called off was on its way. Under
+     * the lock the queued run reads the cancellation and stands down.
+     */
+    public function test_an_order_cancelled_before_the_worker_ran_is_not_confirmed(): void
+    {
+        $order = $this->order();
+        $order->cancel(new \DateTimeImmutable('2026-09-06 10:02:00', new \DateTimeZone('UTC')));
+
+        $this->handler($order, new MockClock('2026-09-06 10:05:00', 'UTC'))(new SendOrderConfirmationCommand($order->id()->toString()));
+
+        self::assertFalse($order->isConfirmed());
+        self::assertSame(0, $this->saves);
+        self::assertStringContainsString('nothing to do', $this->logger->records[0]['message']);
+        self::assertTrue($this->logger->records[0]['context']['canceled']);
+    }
+
+    /**
+     * And one that lands *after* the decision committed.
+     *
+     * The first transaction releases the row, and the customer's DELETE only
+     * has to win the microseconds after it: asked once at the top and not
+     * again, the handler told a customer about a purchase the API had already
+     * accepted calling off, and then recorded the cancelled order as
+     * confirmed. The locked read before the send is the last chance to notice.
+     */
+    public function test_a_cancellation_that_lands_after_the_decision_stops_the_send(): void
+    {
+        $order = $this->order();
+        $reads = 0;
+
+        $orders = $this->createStub(OrderRepository::class);
+        $orders->method('ofIdForUpdate')->willReturnCallback(function () use ($order, &$reads): Order {
+            $this->session->log[] = 'lockOrder';
+
+            if (++$reads > 1) {
+                $order->cancel(new \DateTimeImmutable('2026-09-06 10:05:01', new \DateTimeZone('UTC')));
+            }
+
+            return $order;
+        });
+        $orders->method('save')->willReturnCallback(function (): void {
+            ++$this->saves;
+            $this->session->log[] = 'saveOrder';
+        });
+
+        $handler = new SendOrderConfirmationCommandHandler($orders, new MockClock('2026-09-06 10:05:00', 'UTC'), $this->logger, $this->session);
+        $handler(new SendOrderConfirmationCommand($order->id()->toString()));
+
+        self::assertFalse($order->isConfirmationSent(), 'nothing went out, so nothing is recorded as sent');
+        self::assertSame(1, $this->saves, 'only the decision was written');
+        self::assertCount(1, $this->logger->records);
+        self::assertStringContainsString('called off first', $this->logger->records[0]['message']);
+    }
+
+    /**
+     * And one that lands during the delivery leaves no confirmation on the row.
+     *
+     * The send itself cannot be taken back - it left the process, which is why
+     * it is outside every transaction - but the record of it can still tell
+     * the truth. `orders.confirmation_sent_at` is what the API reports as
+     * `confirmedAt`, so stamping it here left an order that read as confirmed
+     * and called off at once. The crossing is logged instead, because a
+     * customer holding a confirmation for a purchase they cancelled will ask
+     * about it.
+     */
+    public function test_a_cancellation_that_lands_during_the_send_is_not_recorded_as_confirmed(): void
+    {
+        $order = $this->order();
+        $reads = 0;
+
+        $orders = $this->createStub(OrderRepository::class);
+        // Three reads: the decision, the check before the send, and the record
+        // afterwards. The cancellation lands between the last two, which is
+        // the only window the split leaves open.
+        $orders->method('ofIdForUpdate')->willReturnCallback(function () use ($order, &$reads): Order {
+            $this->session->log[] = 'lockOrder';
+
+            if (++$reads > 2) {
+                $order->cancel(new \DateTimeImmutable('2026-09-06 10:05:01', new \DateTimeZone('UTC')));
+            }
+
+            return $order;
+        });
+        $orders->method('save')->willReturnCallback(function (): void {
+            ++$this->saves;
+            $this->session->log[] = 'saveOrder';
+        });
+
+        $handler = new SendOrderConfirmationCommandHandler($orders, new MockClock('2026-09-06 10:05:00', 'UTC'), $this->logger, $this->session);
+        $handler(new SendOrderConfirmationCommand($order->id()->toString()));
+
+        self::assertTrue($order->isCanceled());
+        self::assertFalse($order->isConfirmationSent(), 'a cancelled order carries no confirmation timestamp');
+        self::assertSame(1, $this->saves, 'the decision was written; the delivery was not');
+        $messages = array_column($this->logger->records, 'message');
+        self::assertContains('Order confirmation sent', $messages, 'the message did go out');
+        self::assertContains('Order confirmation crossed a cancellation in flight', $messages);
+    }
+
+    /** An unknown order is an error the queue should see (retry, then park), not a silent drop. */
+    public function test_an_unknown_order_is_not_found(): void
+    {
+        $this->expectException(OrderNotFoundException::class);
+
+        $this->handler(null, new MockClock())(new SendOrderConfirmationCommand(Uuid::uuid4()->toString()));
+    }
+
+    public function test_the_command_validates_its_identifier(): void
+    {
+        $this->expectException(InvalidIdentifierException::class);
+
+        new SendOrderConfirmationCommand('order-1');
+    }
+
+    private function order(): Order
+    {
+        $cart = new Cart(CartId::fromString(Uuid::uuid4()->toString()), CartStatus::pending());
+        $product = new Product(
+            ProductId::fromString(Uuid::uuid4()->toString()),
+            ProductCode::fromString('SKU'),
+            Name::fromString('A product'),
+            Price::of('10.00', 'EUR'),
+            new Quantity(5),
+        );
+        $cart->addItem(new CartItem(ItemId::fromString(Uuid::uuid4()->toString()), $product, new Quantity(2)));
+        $cart->pay();
+
+        return Order::place(OrderId::fromString(Uuid::uuid4()->toString()), $cart, new \DateTimeImmutable('2026-09-06 10:00:00', new \DateTimeZone('UTC')));
+    }
+
+    private function handler(?Order $order, MockClock $clock): SendOrderConfirmationCommandHandler
+    {
+        $orders = $this->createStub(OrderRepository::class);
+        $orders->method('ofIdForUpdate')->willReturnCallback(function () use ($order): ?Order {
+            $this->session->log[] = 'lockOrder';
+
+            return $order;
+        });
+        $orders->method('ofId')->willReturnCallback(static fn() => self::fail('the order must be loaded with its row locked'));
+        $orders->method('save')->willReturnCallback(function (): void {
+            ++$this->saves;
+            $this->session->log[] = 'saveOrder';
+        });
+
+        return new SendOrderConfirmationCommandHandler($orders, $clock, $this->logger, $this->session);
+    }
+}

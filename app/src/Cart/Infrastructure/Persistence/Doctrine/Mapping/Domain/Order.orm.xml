@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<doctrine-mapping xmlns="http://doctrine-project.org/schemas/orm/doctrine-mapping"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                  xsi:schemaLocation="http://doctrine-project.org/schemas/orm/doctrine-mapping
+                                      http://doctrine-project.org/schemas/orm/doctrine-mapping.xsd">
+
+    <!-- `order` is a reserved word on every SQL platform; the table is `orders`. -->
+    <entity name="Siroko\Cart\Domain\Entity\Order"
+            table="orders">
+
+        <!-- A cart is paid once, so it has at most one order. -->
+        <unique-constraints>
+            <unique-constraint name="uniq_orders_cart" columns="cart_id"/>
+        </unique-constraints>
+
+        <id name="id" type="order_id" column="id">
+            <generator strategy="NONE"/>
+        </id>
+
+        <!-- The cart is referenced by id, not by association: the order is a
+             snapshot and must not load, or follow, the cart it came from. -->
+        <field name="cartId" column="cart_id" type="cart_id" nullable="false"/>
+
+        <!-- Copied from the cart at checkout; null for an ownerless cart. -->
+        <field name="customerId" column="customer_id" type="customer_id" length="64" nullable="true">
+            <options>
+                <!-- CustomerId compares byte for byte; MySQL's default
+                     collation does not, so two customers whose ids differ only
+                     in case were one (Version20260906170000). Declared here as
+                     well because Doctrine puts the connection's default
+                     collation on the mapping side, so leaving it out makes
+                     doctrine:schema:validate report the column as changed. -->
+                <option name="collation">utf8mb4_bin</option>
+            </options>
+        </field>
+
+        <!-- `order_lines`, not `lines`: LINES is a reserved word in MySQL. -->
+        <field name="lines" column="order_lines" type="order_lines" nullable="false"/>
+
+        <field name="itemCount" column="item_count" type="integer" nullable="false"/>
+
+        <!-- Embeddable: columns total_amount / total_currency -->
+        <embedded name="total" class="Siroko\Cart\Domain\ValueObject\Price" column-prefix="total_"/>
+
+        <field name="createdAt" column="created_at" type="datetime_immutable" nullable="false"/>
+
+        <field name="confirmedAt" column="confirmed_at" type="datetime_immutable" nullable="true"/>
+
+        <!-- Set when the paid cart behind it was cancelled; a cancelled order is never confirmed. -->
+        <field name="canceledAt" column="canceled_at" type="datetime_immutable" nullable="true"/>
+
+        <!-- Set once the confirmation has actually been delivered, which is a
+             different fact from having decided to confirm: the delivery cannot
+             be part of the transaction that writes confirmed_at. -->
+        <field name="confirmationSentAt" column="confirmation_sent_at" type="datetime_immutable" nullable="true"/>
+    </entity>
+</doctrine-mapping>

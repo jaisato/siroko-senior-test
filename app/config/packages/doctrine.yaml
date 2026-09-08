@@ -8,10 +8,14 @@ doctrine:
 
         profiling_collect_backtrace: '%kernel.debug%'
         use_savepoints: true
+        # `messenger_messages` belongs to the Doctrine transport, not to the
+        # mapping. Where the transport is configured (dev, prod) the Messenger
+        # schema listener adds it to the ORM schema anyway, so migrations:diff
+        # and schema:validate still see it; where it is not (test, in-memory
+        # transports) the filter keeps the migrated table from reading as an
+        # unmapped extra and failing schema:validate.
+        schema_filter: '~^(?!messenger_messages$)~'
         types:
-            uuid: 'Ramsey\Uuid\Doctrine\UuidType'
-            uuid_binary: 'Ramsey\Uuid\Doctrine\UuidBinaryType'
-            uuid_binary_ordered_time: 'Ramsey\Uuid\Doctrine\UuidBinaryOrderedTimeType'
             product_id: Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\ProductIdType
             product_name: Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\ProductNameType
             product_code: Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\ProductCodeType
@@ -19,13 +23,15 @@ doctrine:
             cart_id: Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\CartIdType
             item_id: Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\ItemIdType
             cart_status: Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\CartStatusType
+            order_id: Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\OrderIdType
+            order_lines: Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\OrderLinesType
+            customer_id: Siroko\Cart\Infrastructure\Persistence\Doctrine\Type\CustomerIdType
     orm:
         auto_generate_proxy_classes: true
         enable_lazy_ghost_objects: true
         report_fields_where_declared: true
         validate_xml_mapping: true
         naming_strategy: doctrine.orm.naming_strategy.underscore_number_aware
-        #auto_mapping: true
         mappings:
             CartDomain:
                 type: xml
@@ -33,20 +39,36 @@ doctrine:
                 dir: '%kernel.project_dir%/src/Cart/Infrastructure/Persistence/Doctrine/Mapping/Domain'
                 prefix: 'Siroko\Cart\Domain\Entity'
                 alias: CartDomain
-            CartInfrastructure:
+            CartValueObject:
                 type: xml
                 is_bundle: false
-                dir: '%kernel.project_dir%/src/Cart/Infrastructure/Persistence/Doctrine/Mapping/Embeddable'
-                prefix: 'Siroko\Cart\Infrastructure\Persistence\Doctrine\Embeddable'
-                alias: CartInfrastructure
+                dir: '%kernel.project_dir%/src/Cart/Infrastructure/Persistence/Doctrine/Mapping/ValueObject'
+                prefix: 'Siroko\Cart\Domain\ValueObject'
+                alias: CartValueObject
+            # Tables that belong to the HTTP adapter, not to the domain (Idempotency-Key records).
+            CartApiIdempotency:
+                type: xml
+                is_bundle: false
+                dir: '%kernel.project_dir%/src/Cart/Infrastructure/Persistence/Doctrine/Mapping/Infrastructure'
+                prefix: 'Siroko\Cart\Infrastructure\Api\Idempotency'
+                alias: CartApiIdempotency
         controller_resolver:
             auto_mapping: false
 
 when@test:
     doctrine:
         dbal:
-            # "TEST_TOKEN" is typically set by ParaTest
+            # "TEST_TOKEN" is typically set by ParaTest. Has no effect on SQLite,
+            # which the local suite uses; against MySQL (CI) it targets
+            # `<dbname>_test`.
             dbname_suffix: '_test%env(default::TEST_TOKEN)%'
+
+    services:
+        # The customer_id columns are declared utf8mb4_bin so they compare the
+        # way CustomerId does; SQLite has that behaviour but not that name, and
+        # would refuse the CREATE TABLE. Only the local profile needs it.
+        Siroko\Cart\Infrastructure\Persistence\Doctrine\Middleware\SqliteBinaryCollationMiddleware:
+            tags: ['doctrine.middleware']
 
 when@prod:
     doctrine:

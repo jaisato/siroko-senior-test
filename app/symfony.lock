@@ -73,6 +73,18 @@
             "migrations/.gitignore"
         ]
     },
+    "friendsofphp/php-cs-fixer": {
+        "version": "3.95",
+        "recipe": {
+            "repo": "github.com/symfony/recipes",
+            "branch": "main",
+            "version": "3.39",
+            "ref": "97aaf9026490db73b86c23d49e5774bc89d2b232"
+        },
+        "files": [
+            ".php-cs-fixer.dist.php"
+        ]
+    },
     "league/tactician-bundle": {
         "version": "1.5",
         "recipe": {
@@ -99,6 +111,9 @@
         "files": [
             "config/packages/nelmio_cors.yaml"
         ]
+    },
+    "phpstan/phpstan": {
+        "version": "2.2.13"
     },
     "phpunit/phpunit": {
         "version": "12.3",
@@ -191,6 +206,18 @@
         },
         "files": [
             "config/packages/messenger.yaml"
+        ]
+    },
+    "symfony/monolog-bundle": {
+        "version": "4.0",
+        "recipe": {
+            "repo": "github.com/symfony/recipes",
+            "branch": "main",
+            "version": "3.7",
+            "ref": "feb8fd9520b5694c7d0d2ba17fd4b4d33f9dd9cf"
+        },
+        "files": [
+            "config/packages/monolog.yaml"
         ]
     },
     "symfony/property-info": {

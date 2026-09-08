@@ -1,95 +1,140 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Siroko\Tests\Cart\Infrastructure\Api\Controller\Cart;
 
-use Doctrine\Persistence\ManagerRegistry;
-use Liip\TestFixturesBundle\Services\DatabaseToolCollection;
 use Ramsey\Uuid\Uuid;
-use Siroko\Cart\Domain\Entity\Cart;
-use Siroko\Cart\Domain\Entity\CartItem;
-use Siroko\Cart\Domain\Entity\Product;
-use Siroko\Cart\Domain\Repository\CartRepository;
-use Siroko\Cart\Domain\Repository\ProductRepository;
-use Siroko\Cart\Domain\ValueObject\CartId;
 use Siroko\Cart\Domain\ValueObject\CartStatus;
-use Siroko\Cart\Domain\ValueObject\ItemId;
-use Siroko\Cart\Infrastructure\Persistence\Doctrine\Fixtures\ProductFixtures;
-use Symfony\Bundle\FrameworkBundle\Test\WebTestCase;
-use Symfony\Component\Routing\RouterInterface;
+use Siroko\Tests\Cart\Infrastructure\Api\ApiTestCase;
 
-class GetCartControllerTest extends WebTestCase
+final class GetCartControllerTest extends ApiTestCase
 {
     public function test_get_cart_by_id(): void
     {
-        $client = static::createClient();
+        $cart = $this->persistCart(CartStatus::PENDING, $this->persistProduct('First'), $this->persistProduct('Second'));
 
-        $registry = static::getContainer()->get(ManagerRegistry::class);
-        $emName = array_keys($registry->getManagerNames())[0];
-
-        $tools = static::getContainer()->get(DatabaseToolCollection::class)->get($emName);
-
-        $conn = static::getContainer()->get('doctrine')->getConnection();
-        if ('' === (string) $conn->getDatabase()) {
-            $conn->executeStatement('USE `siroko_cart_test`');
-        }
-
-        $tools->loadFixtures([
-            ProductFixtures::class,
-        ], true);
-
-        /** @var ProductRepository $productRepository */
-        $productRepository = static::getContainer()->get(ProductRepository::class);
-
-        /** @var array|Product[] $products */
-        $products = $productRepository->findAll(1, 5);
-
-        /** @var CartRepository $cartRepository */
-        $cartRepository = static::getContainer()->get(CartRepository::class);
-
-        $cart = new Cart(
-            CartId::fromString(Uuid::uuid4()->toString()),
-            new CartStatus(CartStatus::PENDING),
-        );
-
-        foreach ($products as $product) {
-            $item = new CartItem(ItemId::fromString(Uuid::uuid4()->toString()), $product);
-            $cart->addItem($item);
-        }
-
-        $cartRepository->save($cart);
-
-        /** @var RouterInterface $router */
-        $router = static::getContainer()->get(RouterInterface::class);
-        $url = $router->generate('api_get_cart_by_id', ['id' => $cart->id()->toString()]);
-
-        $client->request('GET', $url, [
-            'headers' => ['accept' => 'application/json'],
-        ]);
-
-        $cart = json_decode(
-            $client->getResponse()->getContent(),
-            true,
-            512,
-            JSON_THROW_ON_ERROR
-        );
+        $this->request('GET', $this->url('api_get_cart_by_id', ['id' => $cart->id()->toString()]));
 
         self::assertResponseStatusCodeSame(200);
-        self::assertResponseIsSuccessful();
+        $body = $this->json();
 
-        self::assertIsArray($cart);
+        self::assertSame($cart->id()->toString(), $body['id']);
+        self::assertSame(CartStatus::PENDING, $body['status']);
+        self::assertIsArray($body['items']);
+        self::assertCount(2, $body['items']);
 
-        self::assertArrayHasKey('id', $cart);
-        self::assertArrayHasKey('status', $cart);
-        self::assertSame(1, $cart['status']);
-        self::assertArrayHasKey('items', $cart);
-        self::assertIsArray($cart['items']);
-        self::assertCount(5, $cart['items']);
+        self::assertSame([0, 1], array_keys($body['items']), 'the lines are a list');
 
-        foreach ($cart['items'] as $item) {
+        foreach ($body['items'] as $item) {
             self::assertArrayHasKey('id', $item);
             self::assertArrayHasKey('name', $item);
             self::assertArrayHasKey('code', $item);
-            self::assertArrayHasKey('price', $item);
+            self::assertArrayHasKey('productId', $item);
+            self::assertSame("19,99\u{a0}€", $item['price']);
+            self::assertSame(1, $item['quantity']);
         }
+    }
+
+    public function test_the_cart_adds_up_its_lines(): void
+    {
+        $cart = $this->persistCartWithLines(CartStatus::PENDING, [
+            [$this->persistProduct('Gafas', amount: '129.95'), 2],
+            [$this->persistProduct('Funda', amount: '9.99'), 1],
+        ]);
+
+        $this->request('GET', $this->url('api_get_cart_by_id', ['id' => $cart->id()->toString()]));
+
+        $body = $this->json();
+        self::assertSame(3, $body['itemCount']);
+        self::assertSame('EUR', $body['currency']);
+        self::assertSame(['amount' => '269.89', 'currency' => 'EUR'], $body['subtotal']);
+        self::assertSame(['amount' => '269.89', 'currency' => 'EUR'], $body['total']);
+
+        $lines = array_column($body['items'], 'lineTotal', 'name');
+        self::assertSame(['amount' => '259.90', 'currency' => 'EUR'], $lines['Gafas']);
+        self::assertSame(['amount' => '9.99', 'currency' => 'EUR'], $lines['Funda']);
+        self::assertSame(['amount' => '129.95', 'currency' => 'EUR'], array_column($body['items'], 'unitPrice', 'name')['Gafas']);
+    }
+
+    public function test_the_cart_reports_when_it_was_opened_and_when_its_reservation_lapses(): void
+    {
+        $deadline = new \DateTimeImmutable('2030-01-01 12:00:00', new \DateTimeZone('UTC'));
+        $cart = $this->persistCartWithLines(CartStatus::PENDING, [[$this->persistProduct(), 1]], $deadline);
+
+        $this->request('GET', $this->url('api_get_cart_by_id', ['id' => $cart->id()->toString()]));
+
+        $body = $this->json();
+        self::assertSame('2030-01-01T12:00:00+00:00', $body['expiresAt']);
+        self::assertEqualsWithDelta(time(), (new \DateTimeImmutable($body['createdAt']))->getTimestamp(), 5);
+
+        $paid = $this->persistCart(CartStatus::PAID, $this->persistProduct());
+        $this->request('GET', $this->url('api_get_cart_by_id', ['id' => $paid->id()->toString()]));
+        self::assertNull($this->json()['expiresAt'], 'a paid cart reserves nothing');
+    }
+
+    public function test_a_line_reports_how_many_units_it_holds(): void
+    {
+        $cart = $this->persistCartWithLines(CartStatus::PENDING, [[$this->persistProduct(), 3]]);
+
+        $this->request('GET', $this->url('api_get_cart_by_id', ['id' => $cart->id()->toString()]));
+
+        self::assertSame(3, array_values($this->json()['items'])[0]['quantity']);
+    }
+
+    /**
+     * `ofId()` returned null and a `@var Cart` annotation hid it, so this was a
+     * TypeError and a 500.
+     */
+    public function test_an_unknown_cart_is_a_404_problem(): void
+    {
+        $this->request('GET', $this->url('api_get_cart_by_id', ['id' => Uuid::uuid4()->toString()]));
+
+        $this->assertProblem(404, 'not found');
+    }
+
+    /**
+     * The route requires a UUID, so a malformed id never reaches the
+     * controller: the router answers 404, in the same RFC 7807 shape.
+     */
+    public function test_a_malformed_id_is_a_404_problem(): void
+    {
+        $this->request('GET', '/api/v1/carts/not-a-uuid');
+
+        $this->assertProblem(404);
+    }
+
+    /**
+     * The routes were bound to `host: localhost`, so the same request through
+     * a proxy or from another container answered 404.
+     */
+    public function test_the_api_answers_whatever_the_host_header_is(): void
+    {
+        $cart = $this->persistCart();
+
+        $this->request(
+            'GET',
+            $this->url('api_get_cart_by_id', ['id' => $cart->id()->toString()]),
+            server: ['HTTP_HOST' => 'api.example.test'],
+        );
+
+        self::assertResponseStatusCodeSame(200);
+        self::assertSame($cart->id()->toString(), $this->json()['id']);
+    }
+
+    public function test_an_empty_cart_lists_no_items(): void
+    {
+        $cart = $this->persistCart();
+
+        $this->request('GET', $this->url('api_get_cart_by_id', ['id' => $cart->id()->toString()]));
+
+        self::assertResponseStatusCodeSame(200);
+        $body = $this->json();
+        self::assertSame([], $body['items']);
+        self::assertSame(0, $body['itemCount']);
+        self::assertNull($body['currency']);
+        self::assertNull($body['subtotal']);
+        self::assertNull($body['total']);
+        self::assertStringContainsString('"items":[]', (string) $this->client->getResponse()->getContent(), 'an empty list, not an empty object');
     }
 }

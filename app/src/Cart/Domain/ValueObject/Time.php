@@ -1,11 +1,10 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Siroko\Cart\Domain\ValueObject;
 
 use Siroko\Cart\Domain\Exception\TimeIsNotValid;
-use DateTimeImmutable;
-use DateTimeInterface;
-use Throwable;
 
 final class Time
 {
@@ -73,11 +72,11 @@ final class Time
         return new self(
             $hour,
             $minutes,
-            $seconds
+            $seconds,
         );
     }
 
-    public static function createFromDateTime(DateTimeInterface $dateTime): self
+    public static function createFromDateTime(\DateTimeInterface $dateTime): self
     {
         return self::createFromHourMinutesAndSeconds(
             (int) $dateTime->format('H'),
@@ -93,11 +92,11 @@ final class Time
     {
         try {
             return self::createFromDateTime(
-                new DateTimeImmutable(
-                    $time
-                )
+                new \DateTimeImmutable(
+                    $time,
+                ),
             );
-        } catch (Throwable $e) {
+        } catch (\Throwable $e) {
             throw TimeIsNotValid::becauseTimeStringDoesNotHaveAValidFormat($time);
         }
     }
@@ -105,7 +104,7 @@ final class Time
     public static function now(): self
     {
         return self::createFromDateTime(
-            new DateTimeImmutable()
+            new \DateTimeImmutable(),
         );
     }
 
@@ -114,7 +113,7 @@ final class Time
         return new self(
             self::HOUR_MIN_VALUE,
             self::MINUTES_MIN_VALUE,
-            self::SECONDS_MIN_VALUE
+            self::SECONDS_MIN_VALUE,
         );
     }
 
@@ -123,11 +122,11 @@ final class Time
         return new self(
             self::HOUR_MAX_VALUE,
             self::MINUTES_MAX_VALUE,
-            self::SECONDS_MAX_VALUE
+            self::SECONDS_MAX_VALUE,
         );
     }
 
-    public function equalsTo(Time $anotherTime): bool
+    public function equalsTo(self $anotherTime): bool
     {
         return $this->hour === $anotherTime->hour
             && $this->minutes === $anotherTime->minutes
@@ -136,15 +135,15 @@ final class Time
 
     public function format(): string
     {
-        $date = new DateTimeImmutable();
+        $date = new \DateTimeImmutable();
         $date = $date->setTime($this->hour, $this->minutes, $this->seconds);
 
         return $date->format(self::TIME_FORMAT);
     }
 
-    public function asDateTime(): DateTimeImmutable
+    public function asDateTime(): \DateTimeImmutable
     {
-        $date = new DateTimeImmutable();
+        $date = new \DateTimeImmutable();
         $date = $date->setTime($this->hour, $this->minutes, $this->seconds);
 
         return $date;
@@ -152,7 +151,7 @@ final class Time
 
     public function formatWithoutSeconds(): string
     {
-        $date = new DateTimeImmutable();
+        $date = new \DateTimeImmutable();
         $date = $date->setTime($this->hour, $this->minutes, $this->seconds);
 
         return $date->format(self::TIME_FORMAT_WITHOUT_SECS);

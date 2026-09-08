@@ -4,8 +4,13 @@
 # Put parameters here that don't need to change on each machine where the app is deployed
 # https://symfony.com/doc/current/best_practices.html#use-parameters-for-application-configuration
 parameters:
-    api_domain: '%env(API_DOMAIN)%'
     api_route_prefix: '%env(API_ROUTE_PREFIX)%'
+    # How long a pending cart keeps its units reserved before cart:release-expired
+    # gives them back (seconds).
+    cart.reservation_ttl_seconds: '%env(int:CART_RESERVATION_TTL)%'
+    # How long a response stored for an Idempotency-Key can be replayed (seconds).
+    api.idempotency_ttl_seconds: '%env(int:IDEMPOTENCY_TTL)%'
+
 services:
     # default configuration for services in *this* file
     _defaults:

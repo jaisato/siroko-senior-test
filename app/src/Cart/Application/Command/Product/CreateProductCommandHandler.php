@@ -1,37 +1,39 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Siroko\Cart\Application\Command\Product;
 
-use Brick\Money\Exception\UnknownCurrencyException;
+use Siroko\Cart\Application\Dto\Product\ProductRead;
 use Siroko\Cart\Domain\Entity\Product;
-use Siroko\Cart\Domain\Exception\InvalidQuantityException;
+use Siroko\Cart\Domain\Exception\DuplicateProductCodeException;
 use Siroko\Cart\Domain\Repository\ProductRepository;
-use Siroko\Cart\Infrastructure\Api\Dto\Product\ProductRead;
 
-class CreateProductCommandHandler
+final class CreateProductCommandHandler
 {
-    /**
-     * @param ProductRepository $productRepository
-     */
     public function __construct(
         private readonly ProductRepository $productRepository,
-    ) {
-    }
+    ) {}
 
     /**
-     * @param CreateProductCommand $command
-     * @return ProductRead
-     * @throws UnknownCurrencyException
-     * @throws InvalidQuantityException
+     * The code check here gives the caller a message it can act on; the unique
+     * index on `product.code` is what makes it hold under concurrency, and the
+     * exception mapper answers 409 for that path too.
+     *
+     * @throws DuplicateProductCodeException
      */
     public function __invoke(CreateProductCommand $command): ProductRead
     {
+        if ($this->productRepository->existsWithCode($command->getCode())) {
+            throw DuplicateProductCodeException::forCode($command->getCode());
+        }
+
         $product = new Product(
             $this->productRepository->nextIdentity(),
             $command->getCode(),
             $command->getName(),
             $command->getPrice(),
-            $command->getQuantity()
+            $command->getQuantity(),
         );
 
         $this->productRepository->save($product);
