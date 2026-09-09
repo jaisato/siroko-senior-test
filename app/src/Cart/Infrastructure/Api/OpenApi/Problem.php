@@ -38,6 +38,15 @@ final class Problem
 
     public const IDEMPOTENCY_KEY_REUSED = 'The Idempotency-Key header was already used with a different method, path or body; a new request needs a new key.';
 
+    /**
+     * The one 409 that is about the key rather than the cart. It shares the
+     * status with "not pending" and "out of stock", and the remedy is not the
+     * same: the original request is still running (retry in a moment), or it
+     * died without recording its outcome (check whether it took effect, then
+     * use a new key - the same one is refused for the rest of its TTL).
+     */
+    public const IDEMPOTENCY_KEY_HELD = 'the Idempotency-Key header names a request that is still being processed (retry in a moment), or one that died without reporting its outcome and is refused under that key for the rest of its TTL (check whether it took effect, then use a new key)';
+
     public const UNAUTHENTICATED = 'Authentication is on (API_TOKENS is set) and the request carried no valid token, neither as "Authorization: Bearer <token>" nor as "X-API-Key: <token>".';
 
     /**

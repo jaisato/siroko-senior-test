@@ -8,6 +8,7 @@ use ApiPlatform\OpenApi\Factory\OpenApiFactoryInterface;
 use ApiPlatform\OpenApi\Model;
 use ApiPlatform\OpenApi\OpenApi;
 use Siroko\Cart\Infrastructure\Api\Security\ApiTokenAuthenticator;
+use Siroko\Cart\Infrastructure\Api\Security\ApiTokens;
 use Siroko\Cart\Infrastructure\Health\DatabaseProbe;
 use Siroko\Cart\Infrastructure\Health\HealthReport;
 use Siroko\Cart\Infrastructure\Health\MessengerProbe;
@@ -18,9 +19,10 @@ use Siroko\Cart\Infrastructure\Health\MessengerProbe;
  * Each `#[ApiResource]` declares, per operation, the error responses that
  * operation can answer. Three things cut across all of them and live here
  * instead: the shared `Problem` schema those responses reference, the way a
- * caller authenticates (two header schemes, both optional because API_TOKENS
- * may be empty), and the 401 every versioned route answers when tokens are
- * on and none is presented. Repeating that 401 in every attribute would say
+ * caller authenticates (two header schemes, and no credentials at all only
+ * while API_TOKENS is empty - the document describes the deployment that
+ * serves it), and the 401 every versioned route answers when tokens are on
+ * and none is presented. Repeating that 401 in every attribute would say
  * nothing the firewall does not already decide for all of them at once.
  *
  * GET /health is documented here as well: it is a plain Symfony route, not an
@@ -63,6 +65,7 @@ final class OpenApiFactoryDecorator implements OpenApiFactoryInterface
 
     public function __construct(
         private readonly OpenApiFactoryInterface $decorated,
+        private readonly ApiTokens $tokens,
         private readonly string $apiPrefix,
     ) {}
 
@@ -102,10 +105,27 @@ final class OpenApiFactoryDecorator implements OpenApiFactoryInterface
             ->withComponents($components->withSchemas($schemas)->withSecuritySchemes($securitySchemes))
             ->withPaths($paths)
             ->withTags([...$openApi->getTags(), new Model\Tag(self::HEALTH_TAG, 'The health of the service: the checks the container healthchecks rely on.')])
-            // Alternatives: no credentials at all (API_TOKENS empty), or a token
-            // by either header. The empty requirement - an object, not a list,
-            // which is why it is an ArrayObject - is what makes them optional.
-            ->withSecurity([new \ArrayObject(), [self::BEARER_SCHEME => []], [self::API_KEY_SCHEME => []]]);
+            ->withSecurity($this->security());
+    }
+
+    /**
+     * The alternatives a caller has: a token by either header and, while
+     * API_TOKENS is empty, no credentials at all. The empty requirement - an
+     * object, not a list, which is why it is an ArrayObject - is what says
+     * anonymous access is allowed, and it is left out as soon as tokens are
+     * on: `security` says which credential to send, and a client generated
+     * from a protected deployment's document that believed it could send
+     * nothing sent nothing and got 401 on every call. The schemes themselves
+     * stay whatever the setting: they say how a token is presented, not
+     * whether one is needed.
+     *
+     * @return list<\ArrayObject<string, mixed>|array<string, list<string>>>
+     */
+    private function security(): array
+    {
+        $withToken = [[self::BEARER_SCHEME => []], [self::API_KEY_SCHEME => []]];
+
+        return $this->tokens->isEnabled() ? $withToken : [new \ArrayObject(), ...$withToken];
     }
 
     /**

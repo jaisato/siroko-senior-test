@@ -24,8 +24,9 @@ app/src/Cart/
 
 Reglas de negocio que la API protege:
 
-- El stock se reserva al añadir un producto al carrito (una unidad por línea) y se devuelve
-  al quitar la línea. Las operaciones de stock son `UPDATE` atómicos y condicionales.
+- El stock se reserva al añadir unidades al carrito (cada línea lleva su cantidad) y se
+  devuelve al reducirlas, al quitar la línea, al cancelar el carrito o al caducar su
+  reserva. Las operaciones de stock son `UPDATE` atómicos y condicionales.
 - Sólo un carrito **pendiente** admite añadir o quitar líneas y hacer *checkout*. Sobre un
   carrito ya pagado las tres operaciones responden `409`.
 - El código de producto es único (`409` si se repite).
@@ -115,6 +116,16 @@ misma clave y el mismo cuerpo devuelve la respuesta guardada con `Idempotent-Rep
 sin volver a ejecutar nada, y con un cuerpo distinto responde `422`. Las claves caducan a
 las `IDEMPOTENCY_TTL` (24 h) y `bin/console idempotency:purge-expired` limpia las vencidas.
 
+La clave se reclama *antes* de ejecutar la petición (un `INSERT` sobre la clave primaria, así
+que de varias peticiones simultáneas con la misma clave sólo una se ejecuta). Mientras la
+original sigue en curso, repetir la clave responde `409` («retry in a moment»). Si la
+original murió sin llegar a guardar su respuesta —el proceso cayó entre el *commit* y el
+almacenamiento—, la clave **no se libera**: pasados 5 minutos la repetición responde `409`
+indicando que aquella petición nunca informó de su resultado, y el cliente comprueba si
+surtió efecto (`GET`) y usa una clave nueva. Liberarla y ejecutar el reintento «de verdad»
+sería crear un segundo carrito o reservar el stock dos veces, justo lo que la cabecera
+existe para evitar.
+
 ### Autenticación (desactivada por defecto)
 
 Con `API_TOKENS` vacía la API es abierta, que es como está pensada la prueba. Al definirla
@@ -122,7 +133,10 @@ Con `API_TOKENS` vacía la API es abierta, que es como está pensada la prueba. 
 `API_TOKENS="s3cret-for-alice:alice,s3cret-for-bob:bob"`— cada petición a `/v1` necesita
 `Authorization: Bearer <token>` o `X-API-Key: <token>`, y responde `401` sin ella. El
 carrito pasa entonces a tener dueño: `GET /v1/carts` sólo lista los del llamante y operar
-sobre el carrito de otro es un `404`. `/health` y `/api/docs` siguen abiertos.
+sobre el carrito de otro es un `404`. `/health` y `/api/docs` siguen abiertos, y el
+documento OpenAPI describe el despliegue que lo sirve: con `API_TOKENS` definida deja de
+anunciar el acceso anónimo en `security` (un cliente generado a partir de él enviaría la
+credencial), y sin ella lo incluye.
 
 Los dos puntos son el separador, así que ni el token ni el cliente pueden llevar uno:
 `t:acme:alice` no dice cuál de los dos separa —¿token `t:acme` para `alice`, o token `t`

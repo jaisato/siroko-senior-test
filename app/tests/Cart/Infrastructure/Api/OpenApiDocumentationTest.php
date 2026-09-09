@@ -6,6 +6,7 @@ namespace Siroko\Tests\Cart\Infrastructure\Api;
 
 use Ramsey\Uuid\Uuid;
 use Siroko\Cart\Infrastructure\Api\ApiExceptionMapper;
+use Siroko\Cart\Infrastructure\Api\Idempotency\IdempotencyGuard;
 use Siroko\Cart\Infrastructure\Api\OpenApi\OpenApiFactoryDecorator;
 use Siroko\Cart\Infrastructure\Api\OpenApi\Problem;
 use Siroko\Cart\Infrastructure\Api\Security\ApiTokenAuthenticator;
@@ -204,6 +205,34 @@ final class OpenApiDocumentationTest extends ApiTestCase
         self::assertContains([OpenApiFactoryDecorator::API_KEY_SCHEME => []], $security);
     }
 
+    /**
+     * An operation that takes an Idempotency-Key can answer three things about
+     * the key itself, whatever the cart says: 400 for a malformed one, 422 for
+     * one reused with another request, and 409 while the request holding it
+     * has not answered - or never will. The 409 is the one a client has to be
+     * told about: the same status also means "not pending" or "out of stock",
+     * and the remedy is different - come back in a moment, or use a new key.
+     */
+    public function test_every_idempotent_operation_documents_what_the_key_can_answer(): void
+    {
+        $checked = 0;
+
+        foreach ($this->operations() as $id => $operation) {
+            if (!self::takesIdempotencyKey($operation)) {
+                continue;
+            }
+
+            ++$checked;
+            $responses = self::responses($operation);
+
+            self::assertStringContainsStringIgnoringCase(Problem::MALFORMED_IDEMPOTENCY_KEY, $responses[400]['description'] ?? '', "$id 400");
+            self::assertSame(Problem::IDEMPOTENCY_KEY_REUSED, $responses[422]['description'] ?? null, "$id 422");
+            self::assertStringContainsString(Problem::IDEMPOTENCY_KEY_HELD, $responses[409]['description'] ?? '', "$id 409");
+        }
+
+        self::assertSame(3, $checked, 'POST /carts, PUT .../add and PUT .../checkout take the header');
+    }
+
     public function test_the_401_response_carries_the_challenge_header(): void
     {
         $operation = $this->operations()['GET ' . self::API_PREFIX . 'carts/{id}'] ?? null;
@@ -259,6 +288,22 @@ final class OpenApiDocumentationTest extends ApiTestCase
         self::assertNotEmpty($operations);
 
         return $operations;
+    }
+
+    /**
+     * @param array<string, mixed> $operation
+     */
+    private static function takesIdempotencyKey(array $operation): bool
+    {
+        foreach ($operation['parameters'] ?? [] as $parameter) {
+            self::assertIsArray($parameter);
+
+            if ('header' === ($parameter['in'] ?? null) && IdempotencyGuard::HEADER === ($parameter['name'] ?? null)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

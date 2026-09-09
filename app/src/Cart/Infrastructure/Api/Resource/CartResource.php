@@ -151,7 +151,7 @@ use Symfony\Component\Routing\Requirement\Requirement;
                 responses: [
                     400 => new Model\Response('The body is not a JSON object, `products` is missing or not a list of 1 to 50 {productId, quantity} objects, the body or an entry names a field this endpoint does not read, a productId is not a UUID, a quantity is not an integer between 1 and 100, the lines of one product add up to more than 100 units, or ' . Problem::MALFORMED_IDEMPOTENCY_KEY . '.', new \ArrayObject(Problem::CONTENT)),
                     404 => new Model\Response('A product of the request does not exist or has been withdrawn.', new \ArrayObject(Problem::CONTENT)),
-                    409 => new Model\Response('A product has fewer units available than requested, or is priced in another currency than the rest of the cart.', new \ArrayObject(Problem::CONTENT)),
+                    409 => new Model\Response('A product has fewer units available than requested, or is priced in another currency than the rest of the cart; or ' . Problem::IDEMPOTENCY_KEY_HELD . '.', new \ArrayObject(Problem::CONTENT)),
                     422 => new Model\Response(Problem::IDEMPOTENCY_KEY_REUSED, new \ArrayObject(Problem::CONTENT)),
                 ],
             ),
@@ -276,7 +276,7 @@ use Symfony\Component\Routing\Requirement\Requirement;
                 responses: [
                     400 => new Model\Response('The Idempotency-Key header is not 1 to 255 printable characters without whitespace.', new \ArrayObject(Problem::CONTENT)),
                     404 => new Model\Response('No cart has this id, or it belongs to another customer.', new \ArrayObject(Problem::CONTENT)),
-                    409 => new Model\Response('The cart is not pending (already paid, delivered or canceled), or it is empty.', new \ArrayObject(Problem::CONTENT)),
+                    409 => new Model\Response('The cart is not pending (already paid, delivered or canceled), or it is empty; or ' . Problem::IDEMPOTENCY_KEY_HELD . '.', new \ArrayObject(Problem::CONTENT)),
                     422 => new Model\Response(Problem::IDEMPOTENCY_KEY_REUSED, new \ArrayObject(Problem::CONTENT)),
                 ],
             ),
@@ -391,7 +391,7 @@ use Symfony\Component\Routing\Requirement\Requirement;
                 responses: [
                     400 => new Model\Response('The body is present but not a JSON object, names a field this endpoint does not read, `quantity` is not an integer between 1 and 100, the line would exceed 100 units, or ' . Problem::MALFORMED_IDEMPOTENCY_KEY . '.', new \ArrayObject(Problem::CONTENT)),
                     404 => new Model\Response('No cart has this id (or it belongs to another customer), or the product does not exist or has been withdrawn.', new \ArrayObject(Problem::CONTENT)),
-                    409 => new Model\Response('The cart is not pending, the product has fewer units available than requested, or the product is priced in another currency than the cart.', new \ArrayObject(Problem::CONTENT)),
+                    409 => new Model\Response('The cart is not pending, the product has fewer units available than requested, or the product is priced in another currency than the cart; or ' . Problem::IDEMPOTENCY_KEY_HELD . '.', new \ArrayObject(Problem::CONTENT)),
                     422 => new Model\Response(Problem::IDEMPOTENCY_KEY_REUSED, new \ArrayObject(Problem::CONTENT)),
                 ],
             ),
