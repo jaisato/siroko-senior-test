@@ -115,6 +115,16 @@ misma clave y el mismo cuerpo devuelve la respuesta guardada con `Idempotent-Rep
 sin volver a ejecutar nada, y con un cuerpo distinto responde `422`. Las claves caducan a
 las `IDEMPOTENCY_TTL` (24 h) y `bin/console idempotency:purge-expired` limpia las vencidas.
 
+La clave se reclama *antes* de ejecutar la petición (un `INSERT` sobre la clave primaria, así
+que de varias peticiones simultáneas con la misma clave sólo una se ejecuta). Mientras la
+original sigue en curso, repetir la clave responde `409` («retry in a moment»). Si la
+original murió sin llegar a guardar su respuesta —el proceso cayó entre el *commit* y el
+almacenamiento—, la clave **no se libera**: pasados 5 minutos la repetición responde `409`
+indicando que aquella petición nunca informó de su resultado, y el cliente comprueba si
+surtió efecto (`GET`) y usa una clave nueva. Liberarla y ejecutar el reintento «de verdad»
+sería crear un segundo carrito o reservar el stock dos veces, justo lo que la cabecera
+existe para evitar.
+
 ### Autenticación (desactivada por defecto)
 
 Con `API_TOKENS` vacía la API es abierta, que es como está pensada la prueba. Al definirla
