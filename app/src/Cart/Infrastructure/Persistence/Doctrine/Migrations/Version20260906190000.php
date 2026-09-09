@@ -58,8 +58,17 @@ final class Version20260906190000 extends AbstractMigration
         // a quantity change can put another unit of it in a cart - and stopping
         // the deploy over it would be asking for a fix (withdraw it) that has
         // already been applied.
+        //
+        // CAST, here and below, because the bound arrives as a string and
+        // MySQL compares a DECIMAL with a string as doubles. At this magnitude
+        // a double still tells the two sides apart; at the column's own
+        // maximum below it does not - doubles near 10^15 are 0.125 apart, so
+        // 999999999999999.9999 and 1000000000000000.0000 are one double, and
+        // the first total the column refuses read as equal to the last one it
+        // accepts. Cast to the column's type, the comparison is the decimal
+        // one the gate is meant to make.
         $overpriced = $this->connection->fetchFirstColumn(
-            'SELECT code FROM product WHERE price_amount > :maximum AND deleted_at IS NULL ORDER BY code LIMIT 10',
+            'SELECT code FROM product WHERE price_amount > CAST(:maximum AS DECIMAL(19, 4)) AND deleted_at IS NULL ORDER BY code LIMIT 10',
             ['maximum' => Price::MAX_AMOUNT],
         );
 
@@ -92,7 +101,7 @@ final class Version20260906190000 extends AbstractMigration
                   JOIN product p ON p.id = i.product_id
                  WHERE c.status = :pending
                  GROUP BY i.cart_id, p.price_currency
-                HAVING SUM(p.price_amount * i.quantity) > :maximum
+                HAVING SUM(p.price_amount * i.quantity) > CAST(:maximum AS DECIMAL(19, 4))
                  ORDER BY SUM(p.price_amount * i.quantity) DESC
                  LIMIT 10
                 SQL,

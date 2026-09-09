@@ -191,6 +191,13 @@ final class UpgradeGatesTest extends TestCase
         // Fifteen integral digits: NUMERIC(19, 4), the column itself rather
         // than the unit ceiling derived from it.
         self::assertSame('999999999999999.9999', $totals['params']['maximum']);
+        // And compared as the decimal it is. The parameter arrives as a
+        // string, and MySQL compares a DECIMAL with a string as doubles, which
+        // near 10^15 cannot tell 999999999999999.9999 from 1000000000000000:
+        // the one total the column refuses read as equal to the last one it
+        // accepts, and the cart passed the gate into an out-of-range error.
+        self::assertStringContainsString('HAVING SUM(p.price_amount * i.quantity) > CAST(:maximum AS DECIMAL(19, 4))', $totals['sql']);
+        self::assertStringContainsString('price_amount > CAST(:maximum AS DECIMAL(19, 4))', $asked[0]['sql'], 'the unit ceiling is compared the same way');
     }
 
     public function test_a_pending_cart_whose_total_the_column_cannot_hold_stops_the_upgrade(): void
