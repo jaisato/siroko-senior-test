@@ -24,8 +24,9 @@ app/src/Cart/
 
 Reglas de negocio que la API protege:
 
-- El stock se reserva al añadir un producto al carrito (una unidad por línea) y se devuelve
-  al quitar la línea. Las operaciones de stock son `UPDATE` atómicos y condicionales.
+- El stock se reserva al añadir unidades al carrito (cada línea lleva su cantidad) y se
+  devuelve al reducirlas, al quitar la línea, al cancelar el carrito o al caducar su
+  reserva. Las operaciones de stock son `UPDATE` atómicos y condicionales.
 - Sólo un carrito **pendiente** admite añadir o quitar líneas y hacer *checkout*. Sobre un
   carrito ya pagado las tres operaciones responden `409`.
 - El código de producto es único (`409` si se repite).
