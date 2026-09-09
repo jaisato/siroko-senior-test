@@ -6,6 +6,7 @@ namespace Siroko\Tests\Cart\Infrastructure\Api\Security;
 
 use Ramsey\Uuid\Uuid;
 use Siroko\Cart\Domain\ValueObject\CartStatus;
+use Siroko\Cart\Infrastructure\Api\OpenApi\OpenApiFactoryDecorator;
 use Siroko\Tests\Cart\Infrastructure\Api\ApiTestCase;
 
 /**
@@ -55,6 +56,29 @@ final class ApiTokenAuthenticationTest extends ApiTestCase
         $this->request('GET', '/api/docs.jsonopenapi', server: ['HTTP_ACCEPT' => 'application/vnd.openapi+json']);
 
         self::assertResponseStatusCodeSame(200);
+    }
+
+    /**
+     * With tokens on, the document stops offering the anonymous alternative.
+     * `security` says which credential to send, and a client generated from a
+     * protected deployment's document that believed it could send nothing
+     * sent nothing and got 401 on every call. The two schemes stay: they say
+     * how a token is presented, not whether one is needed.
+     */
+    public function test_the_documentation_no_longer_offers_anonymous_access(): void
+    {
+        $this->request('GET', '/api/docs.jsonopenapi', server: ['HTTP_ACCEPT' => 'application/vnd.openapi+json']);
+        self::assertResponseStatusCodeSame(200);
+
+        $document = $this->json();
+        $security = $document['security'] ?? null;
+        self::assertIsArray($security);
+
+        self::assertNotContains([], $security, 'anonymous access is not an option while API_TOKENS is set');
+        self::assertContains([OpenApiFactoryDecorator::BEARER_SCHEME => []], $security);
+        self::assertContains([OpenApiFactoryDecorator::API_KEY_SCHEME => []], $security);
+        self::assertArrayHasKey(OpenApiFactoryDecorator::BEARER_SCHEME, $document['components']['securitySchemes'] ?? []);
+        self::assertArrayHasKey(OpenApiFactoryDecorator::API_KEY_SCHEME, $document['components']['securitySchemes'] ?? []);
     }
 
     public function test_a_cart_created_with_a_token_belongs_to_its_customer(): void

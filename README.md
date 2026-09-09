@@ -132,7 +132,10 @@ Con `API_TOKENS` vacía la API es abierta, que es como está pensada la prueba. 
 `API_TOKENS="s3cret-for-alice:alice,s3cret-for-bob:bob"`— cada petición a `/v1` necesita
 `Authorization: Bearer <token>` o `X-API-Key: <token>`, y responde `401` sin ella. El
 carrito pasa entonces a tener dueño: `GET /v1/carts` sólo lista los del llamante y operar
-sobre el carrito de otro es un `404`. `/health` y `/api/docs` siguen abiertos.
+sobre el carrito de otro es un `404`. `/health` y `/api/docs` siguen abiertos, y el
+documento OpenAPI describe el despliegue que lo sirve: con `API_TOKENS` definida deja de
+anunciar el acceso anónimo en `security` (un cliente generado a partir de él enviaría la
+credencial), y sin ella lo incluye.
 
 Los dos puntos son el separador, así que ni el token ni el cliente pueden llevar uno:
 `t:acme:alice` no dice cuál de los dos separa —¿token `t:acme` para `alice`, o token `t`
