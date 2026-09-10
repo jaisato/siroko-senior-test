@@ -235,6 +235,12 @@ Los mismos targets existen en el `Makefile` (`make cs`, `make stan`, `make lint`
   corre la suite con cobertura (`pcov`), el grupo `mysql`, y falla si la cobertura de
   líneas baja del 80 % (`bin/coverage-threshold`).
 
+`.github/workflows/audit.yml` ejecuta `composer audit --locked` en cada push y pull
+request y, además, cada lunes por programación: un aviso publicado contra una versión
+que `composer.lock` ya fija llega sin ningún commit, y sólo una ejecución programada lo
+pone en rojo. GitHub desactiva los workflows programados tras 60 días sin commits y
+avisa por correo; se reactivan desde la pestaña Actions.
+
 ## Variables de entorno
 
 | Variable | Dónde | Uso |
