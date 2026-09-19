@@ -1,6 +1,10 @@
 # Development stack. Values come from a root `.env` (see .env.example); every
 # variable has a safe development default so a plain `docker compose up -d`
 # works on a fresh clone. The application connects with its own MySQL user.
+#
+# The published port binds to BIND_ADDRESS, 127.0.0.1 by default: the API is
+# reachable from this machine only. BIND_ADDRESS=0.0.0.0 (in .env or the shell)
+# opens it to other machines on the network.
 services:
   php:
     build:
@@ -107,7 +111,7 @@ services:
     depends_on:
       - php
     ports:
-      - "${NGINX_PORT:-8080}:80"
+      - "${BIND_ADDRESS:-127.0.0.1}:${NGINX_PORT:-8080}:80"
     volumes:
       # Only the document root is exposed to the web server.
       - ./app/public:/var/www/app/public:ro

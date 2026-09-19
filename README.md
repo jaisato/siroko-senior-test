@@ -51,7 +51,9 @@ Reglas de negocio que la API protege:
 5. `make migrate` — crea las bases de datos de desarrollo y de test y ejecuta las migraciones.
 6. (Opcional) `make fixtures` — carga 20 productos y un carrito de ejemplo.
 7. La API está en `http://localhost:8080/api` y su documentación OpenAPI en
-   `http://localhost:8080/api/docs`.
+   `http://localhost:8080/api/docs`. El puerto se publica en `127.0.0.1` (sólo esta
+   máquina); para llegar desde otro equipo, `BIND_ADDRESS=0.0.0.0` en `.env` o en la shell.
+   nginx añade `X-Content-Type-Options: nosniff` y `X-Frame-Options: DENY` a cada respuesta.
 
 `make help` lista el resto de targets (`sh`, `logs`, `test`, `stan`, `cs`, `lint`, `check`).
 
@@ -247,6 +249,7 @@ avisa por correo; se reactivan desde la pestaña Actions.
 |----------|-------|-----|
 | `APP_ENV`, `APP_SECRET` | `.env` raíz / compose | entorno Symfony; el secreto de producción viene siempre del entorno |
 | `MYSQL_DATABASE`, `MYSQL_USER`, `MYSQL_PASSWORD`, `MYSQL_ROOT_PASSWORD` | `.env` raíz / compose | base de datos; compose compone `DATABASE_URL` con ellas |
+| `BIND_ADDRESS`, `NGINX_PORT` | `.env` raíz / compose | dirección del host (`127.0.0.1`) y puerto (`8080`) en los que se publica nginx |
 | `DATABASE_URL` | `app/.env*` | DSN Doctrine (`app/.env.test` usa SQLite) |
 | `MESSENGER_TRANSPORT_DSN` | `app/.env` / compose | transporte Messenger de los eventos de dominio (`doctrine://default`: la cola vive en la base de datos de la aplicación) |
 | `API_ROUTE_PREFIX` | `app/.env` | prefijo de las rutas de la API (`/api`) |
